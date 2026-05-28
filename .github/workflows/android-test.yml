@@ -73,8 +73,17 @@ jobs:
           working-directory: android
           script: |
             adb wait-for-device
+            adb logcat -c || true
+            set +e
             # Run the instrumented VPN-flow test (it self-grants ACTIVATE_VPN).
             gradle connectedDebugAndroidTest --no-daemon --stacktrace
+            rc=$?
+            # Capture logcat regardless so a native/Java crash is visible.
+            adb logcat -d -v time > logcat-full.txt 2>&1 || true
+            adb logcat -d -v time AndroidRuntime:E razban-core:V libc:F DEBUG:V GoLog:V System.err:W ActivityManager:I "*:S" > logcat-crash.txt 2>&1 || true
+            echo "===== logcat-crash.txt ====="
+            cat logcat-crash.txt || true
+            exit $rc
 
       - name: Show SOCKS log + assert routing
         if: always()
@@ -100,4 +109,6 @@ jobs:
           name: android-test-reports
           path: |
             android/app/build/reports/androidTests/
+            android/logcat-full.txt
+            android/logcat-crash.txt
             /tmp/socks.log
