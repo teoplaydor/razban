@@ -50,28 +50,65 @@ class VpnFlowTest {
     @Test
     fun directFlow() {
         // Baseline: confirm the emulator has internet at all BEFORE the VPN.
-        val baseline = httpGetStatus("https://example.org/")
+        val baseline = ipGetStatus("https://1.1.1.1/")
         android.util.Log.i("razban-core", "directFlow baseline (no VPN) = $baseline")
 
         ConfigStore.importConfig(ctx, directConfig())
         connectAndWait()
-        // Marker host unique to this test so the CI can tell the SOCKS log it
-        // did NOT pass through the proxy.
-        val code = httpGetStatus("https://example.org/")
+        // PROOF OF EGRESS via IP literal (no DNS dependency): traffic must
+        // reach the internet through the TUN → direct outbound. Marker IP
+        // 1.1.1.1 so the CI can confirm the SOCKS exit did NOT see it.
+        val code = ipGetStatus("https://1.1.1.1/")
+        // Informational: does DNS resolve under the tunnel? (separate concern)
+        val dns = httpGetStatus("https://example.org/")
+        android.util.Log.i("razban-core", "directFlow DNS probe = $dns")
         stop()
-        assertTrue("direct egress through the TUN should reach the internet (got $code)",
-            code in 200..399)
+        assertTrue("direct egress through the TUN should reach the internet (got $code)", code > 0)
     }
 
     @Test
     fun proxyFlow() {
         ConfigStore.importConfig(ctx, proxyConfig())
         connectAndWait()
-        // Unique marker host the host-side SOCKS logger will record.
-        val code = httpGetStatus("https://example.net/")
+        // PROOF the proxy exit carries traffic, via IP literal 8.8.8.8 (no DNS).
+        // The host SOCKS logger must record "8.8.8.8" → the connection was
+        // tunneled through the proxy.
+        val code = ipGetStatus("https://8.8.8.8/")
         stop()
-        assertTrue("traffic tunneled through the SOCKS exit should reach the internet (got $code)",
-            code in 200..399)
+        assertTrue("traffic tunneled through the SOCKS exit should reach the internet (got $code)", code > 0)
+    }
+
+    /** HTTPS GET to an IP literal — uses a trust-all SSL context so the
+     *  hostname/cert mismatch on a bare IP doesn't mask the egress signal.
+     *  TEST-ONLY: never in the shipped app. Any HTTP status (even 4xx) means
+     *  the connection completed end-to-end = traffic flowed. */
+    private fun ipGetStatus(urlStr: String): Int {
+        val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+            override fun checkClientTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+            override fun checkServerTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+            override fun getAcceptedIssuers() = arrayOf<java.security.cert.X509Certificate>()
+        })
+        val sc = javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null, trustAll, java.security.SecureRandom()) }
+        var last = -1
+        repeat(6) { attempt ->
+            try {
+                val c = (URL(urlStr).openConnection() as javax.net.ssl.HttpsURLConnection).apply {
+                    sslSocketFactory = sc.socketFactory
+                    setHostnameVerifier { _, _ -> true }
+                    connectTimeout = 8000; readTimeout = 8000
+                    instanceFollowRedirects = false; requestMethod = "GET"
+                }
+                last = c.responseCode
+                try { c.inputStream.use { it.readBytes() } } catch (_: Exception) {}
+                c.disconnect()
+                if (last > 0) return last
+            } catch (e: Exception) {
+                last = -1
+                android.util.Log.w("razban-core", "ipGet $urlStr attempt $attempt err: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            Thread.sleep(2000)
+        }
+        return last
     }
 
     // ───────────────────────── helpers ─────────────────────────

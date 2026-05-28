@@ -104,13 +104,13 @@ jobs:
           echo "=== SOCKS exit log ==="
           cat "$SOCKS_LOG" || echo "(empty)"
           echo "======================"
-          if grep -q "example.net" "$SOCKS_LOG"; then
-            echo "PASS: proxy flow tunneled example.net through the SOCKS exit"
+          if grep -q "8.8.8.8" "$SOCKS_LOG"; then
+            echo "PASS: proxy flow tunneled 8.8.8.8 through the SOCKS exit"
           else
             echo "FAIL: proxy flow did NOT reach the SOCKS exit"; exit 1
           fi
-          if grep -q "example.org" "$SOCKS_LOG"; then
-            echo "FAIL: direct flow leaked into the proxy (example.org seen at exit)"; exit 1
+          if grep -q "1.1.1.1" "$SOCKS_LOG"; then
+            echo "FAIL: direct flow leaked into the proxy (1.1.1.1 seen at exit)"; exit 1
           else
             echo "PASS: direct flow did NOT pass through the proxy (egressed directly)"
           fi

@@ -176,12 +176,22 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         options.inet6Address.let { while (it.hasNext()) it.next().let { p -> builder.addAddress(p.address(), p.prefix()) } }
 
         if (options.autoRoute) {
-            // DNS: the tun's own DNS hijack address (tun_addr + 1). sing-box's
-            // dns module answers it; queries never leave through a leaky path.
+            // DNS server(s) the OS will send queries to while the VPN is up.
+            // MUST be set, otherwise the system has no resolver under the tunnel
+            // → every lookup is UnknownHostException ("No address associated
+            // with hostname"). Prefer the tun's hijack address (tun_addr+1) so
+            // sing-box's own dns module answers; ALWAYS also add public
+            // resolvers as a guarantee (their queries enter the tun and route
+            // per the config — no leak).
+            var dnsAdded = false
             try {
                 val dns = options.getDNSServerAddress() // StringBox, throws if prefix == /32
                 builder.addDnsServer(dns.value)
-            } catch (_: Throwable) { /* config provides explicit dns.servers as fallback */ }
+                dnsAdded = true
+            } catch (_: Throwable) { /* fall through to public resolvers */ }
+            try { builder.addDnsServer("1.1.1.1"); dnsAdded = true } catch (_: Throwable) {}
+            try { builder.addDnsServer("8.8.8.8") } catch (_: Throwable) {}
+            android.util.Log.d(TAG, "openTun: DNS servers added=$dnsAdded")
 
             // Route the auto_route-computed ranges (everything EXCEPT LAN /
             // private space) through the TUN; sing-box then sends any flow it
