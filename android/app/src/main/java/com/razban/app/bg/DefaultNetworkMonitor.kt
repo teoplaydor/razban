@@ -74,8 +74,17 @@ object DefaultNetworkMonitor {
                 if (!ni.isUp) continue
                 val addrs = ArrayList<String>()
                 for (ia in ni.interfaceAddresses) {
-                    val host = ia.address?.hostAddress ?: continue
-                    addrs.add("$host/${ia.networkPrefixLength}")
+                    var host = ia.address?.hostAddress ?: continue
+                    // CRITICAL: strip the IPv6 scope-zone suffix (e.g.
+                    // "fe80::1%dummy0"). The Go core parses these with
+                    // netip.ParsePrefix, which PANICS on a zone in a prefix —
+                    // a native SIGABRT that kills the whole process. Seen on
+                    // the emulator's dummy0/link-local addresses.
+                    val pct = host.indexOf('%')
+                    if (pct >= 0) host = host.substring(0, pct)
+                    val prefix = ia.networkPrefixLength.toInt()
+                    if (prefix < 0 || prefix > 128) continue
+                    addrs.add("$host/$prefix")
                 }
                 // Use explicit gomobile setters — acronym fields (MTU, DNSServer)
                 // don't map cleanly to Kotlin property syntax.
