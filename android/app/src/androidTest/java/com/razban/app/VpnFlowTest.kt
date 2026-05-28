@@ -50,14 +50,14 @@ class VpnFlowTest {
     @Test
     fun directFlow() {
         // Baseline: confirm the emulator has internet at all BEFORE the VPN.
-        val baseline = httpGetStatus("http://example.org/")
+        val baseline = httpGetStatus("https://example.org/")
         android.util.Log.i("razban-core", "directFlow baseline (no VPN) = $baseline")
 
         ConfigStore.importConfig(ctx, directConfig())
         connectAndWait()
         // Marker host unique to this test so the CI can tell the SOCKS log it
         // did NOT pass through the proxy.
-        val code = httpGetStatus("http://example.org/")
+        val code = httpGetStatus("https://example.org/")
         stop()
         assertTrue("direct egress through the TUN should reach the internet (got $code)",
             code in 200..399)
@@ -68,7 +68,7 @@ class VpnFlowTest {
         ConfigStore.importConfig(ctx, proxyConfig())
         connectAndWait()
         // Unique marker host the host-side SOCKS logger will record.
-        val code = httpGetStatus("http://example.net/")
+        val code = httpGetStatus("https://example.net/")
         stop()
         assertTrue("traffic tunneled through the SOCKS exit should reach the internet (got $code)",
             code in 200..399)
