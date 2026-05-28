@@ -1,0 +1,24 @@
+{
+  "latestVersion": "0.1.0",
+  "releaseDate": "2026-05-28",
+  "mandatory": false,
+  "notes": "Initial release.",
+  "windows": {
+    "portable": {
+      "url": "https://github.com/teoplaydor/razban/releases/download/v0.1.0/Razban-portable-0.1.0.zip",
+      "size": 352693540,
+      "sha256": "db1cebb8a0fa2238172f89362f83402ee00078f4a2c0339cd69c3a9b737d752d"
+    },
+    "installer": {
+      "url": "https://github.com/teoplaydor/razban/releases/download/v0.1.0/Razban-Setup-0.1.0.exe",
+      "size": 288600196,
+      "sha256": "07697bd00aa1b7463aa7cffdcc5a40b06beef9b2332d72635a85cb533de25b4a"
+    }
+  },
+  "android": {
+    "available": false,
+    "url": "",
+    "size": 0,
+    "sha256": ""
+  }
+}

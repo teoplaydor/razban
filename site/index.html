@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Razban — network privacy &amp; security utility</title>
+<meta name="description" content="Razban — портативная утилита сетевой защиты для Windows: шифрование трафика, гибкая маршрутизация на уровне приложений и сайтов, защита соединений в недоверенных сетях.">
+<link rel="icon" href="assets/razban-256.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="brand">
+    <img src="assets/razban-256.png" alt="" class="logo">
+    <span>Razban</span>
+  </div>
+  <nav class="links">
+    <a href="#download">Загрузить</a>
+    <a href="#features">Возможности</a>
+    <a href="#legal">Правовая информация</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero">
+    <h1>Network privacy utility</h1>
+    <p class="lede">
+      Portable Windows-утилита для шифрования сетевого трафика и применения
+      пользовательских правил маршрутизации на уровне <b>отдельных приложений
+      и сайтов</b>. Базовый сценарий — защита соединений в недоверенных сетях
+      (публичные Wi-Fi, гостевые сети, корпоративные подсети с ограниченным доверием).
+    </p>
+    <div class="hero-cta">
+      <a href="#download" class="btn btn-primary">Перейти к загрузке</a>
+      <a href="#features" class="btn btn-ghost">Возможности</a>
+    </div>
+    <p class="hero-sub">Portable · per-user · версия <span data-version>0.1.0</span></p>
+  </section>
+
+  <section id="download" class="download">
+    <h2>Загрузить</h2>
+    <p class="choose">
+      Бинарные сборки публикуются в публичном репозитории GitHub. Каждый релиз
+      содержит установщик (per-user) и портативную сборку. Контрольные суммы
+      SHA-256 указаны на странице релиза.
+    </p>
+    <div class="cards">
+      <article class="card card-accent">
+        <div class="card-os">GitHub Releases</div>
+        <h3>Текущий релиз</h3>
+        <p class="card-desc">Установщик и портативная сборка для Windows&nbsp;10/11&nbsp;x64. Релизы выкладываются в публичный репозиторий с открытыми контрольными суммами.</p>
+        <ul class="meta">
+          <li>Версия <span data-version>0.1.0</span></li>
+          <li>Windows 10/11 (x64)</li>
+          <li>Без прав администратора</li>
+        </ul>
+        <a class="btn btn-primary" href="https://github.com/teoplaydor/razban/releases/latest" rel="noopener">Открыть страницу релиза →</a>
+      </article>
+    </div>
+  </section>
+
+  <section id="features" class="features">
+    <h2>Возможности</h2>
+    <div class="grid">
+      <div class="feat"><h4>Per-app маршрутизация</h4><p>Точное управление: какие приложения работают через защищённый канал, а какие — напрямую. Правила задаются вручную или подбираются автоматически.</p></div>
+      <div class="feat"><h4>Per-site правила</h4><p>Отдельная маршрутизация для конкретных доменов. Один процесс, индивидуальные пути для разных хостов.</p></div>
+      <div class="feat"><h4>Современное шифрование</h4><p>Транспорт на базе открытого сетевого ядра sing-box. Поддержка нескольких профилей соединения с автоматическим выбором лучшего по latency.</p></div>
+      <div class="feat"><h4>Адаптивный транспорт</h4><p>Клиент сам подбирает рабочий профиль соединения для каждого хоста в зависимости от условий сети. Без ручной настройки.</p></div>
+      <div class="feat"><h4>Portable</h4><p>Запускается без установки в систему: распакуй архив и запусти. Конфигурация хранится в собственной директории, рядом с исполняемым файлом.</p></div>
+      <div class="feat"><h4>Без прав администратора</h4><p>Установщик ставит программу для текущего пользователя (per-user). Не пишет в HKLM, не создаёт системных служб, не требует UAC.</p></div>
+    </div>
+  </section>
+
+  <section id="legal" class="legal">
+    <h2>Правовая информация</h2>
+    <p class="disclaimer">
+      Razban — утилита сетевой защиты для персонального использования. Программа
+      предназначена для шифрования сетевого трафика, защиты соединений в
+      недоверенных сетях и применения пользовательских правил маршрутизации.
+    </p>
+    <p class="disclaimer">
+      Razban не предназначена и не пропагандируется в качестве средства доступа
+      к информационным ресурсам, доступ к которым ограничен в соответствии с
+      применимым законодательством Российской Федерации. Пользователь самостоятельно
+      отвечает за соблюдение требований применимого законодательства по месту
+      использования программы.
+    </p>
+    <p class="disclaimer">
+      Программа предоставляется «как есть», без каких-либо явных или подразумеваемых
+      гарантий. Авторы не несут ответственности за прямой или косвенный ущерб,
+      связанный с её использованием.
+    </p>
+  </section>
+</main>
+
+<footer>
+  <span>Razban · v<span data-version>0.1.0</span></span>
+  <span class="muted"><a href="https://github.com/teoplaydor/razban">GitHub</a></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
