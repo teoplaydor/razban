@@ -21,10 +21,20 @@ object Notifications {
     fun startForeground(service: Service) {
         ensureChannel(service)
         val notification = build(service, service.getString(R.string.notif_connecting))
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            service.startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
-        } else {
-            service.startForeground(ID, notification)
+        // The FGS *type* must match a manifest-declared type AND exist on the
+        // running API. SPECIAL_USE (and SYSTEM_EXEMPTED) only exist from API 34;
+        // passing a type that the device doesn't know throws IllegalArgument on
+        // the main thread and crashes the service. So pass the type only on 34+,
+        // and start without a type on older releases (valid there).
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                service.startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                service.startForeground(ID, notification)
+            }
+        } catch (e: Exception) {
+            // Last-resort: never let notification quirks kill the tunnel.
+            try { service.startForeground(ID, notification) } catch (_: Exception) {}
         }
     }
 
