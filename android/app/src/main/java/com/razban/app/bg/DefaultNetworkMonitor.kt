@@ -24,6 +24,10 @@ object DefaultNetworkMonitor {
     var currentNetwork: Network? = null
         private set
 
+    /** Called when the underlying physical network changes, so the VpnService
+     *  can setUnderlyingNetworks() — required for protected sockets to egress. */
+    var onNetwork: ((Network?) -> Unit)? = null
+
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var listener: InterfaceUpdateListener? = null
 
@@ -33,15 +37,18 @@ object DefaultNetworkMonitor {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 currentNetwork = network
+                onNetwork?.invoke(network)
                 update(context, network)
             }
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 currentNetwork = network
+                onNetwork?.invoke(network)
                 update(context, network)
             }
             override fun onLost(network: Network) {
                 if (currentNetwork == network) {
                     currentNetwork = null
+                    onNetwork?.invoke(null)
                     listener?.updateDefaultInterface("", -1, false, false)
                 }
             }

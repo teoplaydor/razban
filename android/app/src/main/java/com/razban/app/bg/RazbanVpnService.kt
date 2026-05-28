@@ -71,6 +71,12 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     private fun startTunnel() {
         status = Status.Starting
         Notifications.startForeground(this)
+        // Keep the VpnService's underlying network in sync with the physical
+        // (NOT_VPN) network the monitor tracks — required for the core's
+        // protected sockets to actually egress (SFA does this too).
+        DefaultNetworkMonitor.onNetwork = { net ->
+            try { setUnderlyingNetworks(if (net != null) arrayOf(net) else null) } catch (_: Throwable) {}
+        }
         scope.launch {
             try {
                 android.util.Log.d(TAG, "startTunnel: libbox ${Libbox.version()}")
@@ -219,7 +225,12 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
         val pfd = builder.establish() ?: error("VpnService.Builder.establish() returned null")
         tunFd = pfd
-        android.util.Log.d(TAG, "openTun: established fd=${pfd.fd}")
+        // Point the VPN at its underlying physical network so protected
+        // outbound sockets route there (not back into the tun).
+        try {
+            DefaultNetworkMonitor.currentNetwork?.let { setUnderlyingNetworks(arrayOf(it)) }
+        } catch (_: Throwable) {}
+        android.util.Log.d(TAG, "openTun: established fd=${pfd.fd}, underlying=${DefaultNetworkMonitor.currentNetwork}")
         return pfd.fd
     }
 
