@@ -49,6 +49,10 @@ class VpnFlowTest {
 
     @Test
     fun directFlow() {
+        // Baseline: confirm the emulator has internet at all BEFORE the VPN.
+        val baseline = httpGetStatus("http://example.org/")
+        android.util.Log.i("razban-core", "directFlow baseline (no VPN) = $baseline")
+
         ConfigStore.importConfig(ctx, directConfig())
         connectAndWait()
         // Marker host unique to this test so the CI can tell the SOCKS log it
@@ -107,6 +111,7 @@ class VpnFlowTest {
                 if (last in 200..399) return last
             } catch (e: Exception) {
                 last = -1
+                android.util.Log.w("razban-core", "fetch $urlStr attempt $attempt err: ${e.javaClass.simpleName}: ${e.message}")
             }
             Thread.sleep(2000)
         }
