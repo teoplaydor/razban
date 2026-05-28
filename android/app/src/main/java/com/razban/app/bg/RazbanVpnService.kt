@@ -229,10 +229,12 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     private fun tryAddDisallowed(b: Builder, pkg: String) =
         try { b.addDisallowedApplication(pkg) } catch (_: Throwable) {}
 
+    private var protectCount = 0
     override fun autoDetectInterfaceControl(fd: Int) {
         // Protect the core's own outbound sockets from being re-captured by the
         // TUN (the thing auto_route would otherwise loop). Mandatory.
-        protect(fd)
+        val ok = protect(fd)
+        if (protectCount++ < 5) android.util.Log.d(TAG, "autoDetectInterfaceControl: protect(fd=$fd) -> $ok")
     }
 
     override fun usePlatformAutoDetectInterfaceControl(): Boolean = true
