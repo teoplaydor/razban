@@ -75,12 +75,16 @@ jobs:
             adb wait-for-device
             adb logcat -c || true
             set +e
+            # Stream logcat to a file from the START (survives a script abort,
+            # captures a native crash that a post-hoc `logcat -d` would miss).
+            adb logcat -v threadtime > "$GITHUB_WORKSPACE/logcat-full.txt" 2>&1 &
+            LOGCAT_PID=$!
             # Run the instrumented VPN-flow test (it self-grants ACTIVATE_VPN).
             gradle connectedDebugAndroidTest --no-daemon --stacktrace
             rc=$?
-            # Capture logcat to an ABSOLUTE path so a later step can read it.
-            adb logcat -d -v threadtime > "$GITHUB_WORKSPACE/logcat-full.txt" 2>&1 || true
-            echo "rc=$rc"
+            sleep 3
+            kill "$LOGCAT_PID" 2>/dev/null
+            echo "rc=$rc; logcat bytes: $(wc -c < "$GITHUB_WORKSPACE/logcat-full.txt" 2>/dev/null)"
             exit $rc
 
       - name: Dump crash logcat
