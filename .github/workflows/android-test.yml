@@ -78,12 +78,17 @@ jobs:
             # Run the instrumented VPN-flow test (it self-grants ACTIVATE_VPN).
             gradle connectedDebugAndroidTest --no-daemon --stacktrace
             rc=$?
-            # Capture logcat regardless so a native/Java crash is visible.
-            adb logcat -d -v time > logcat-full.txt 2>&1 || true
-            adb logcat -d -v time AndroidRuntime:E razban-core:V libc:F DEBUG:V GoLog:V System.err:W ActivityManager:I "*:S" > logcat-crash.txt 2>&1 || true
-            echo "===== logcat-crash.txt ====="
-            cat logcat-crash.txt || true
+            # Capture logcat to an ABSOLUTE path so a later step can read it.
+            adb logcat -d -v threadtime > "$GITHUB_WORKSPACE/logcat-full.txt" 2>&1 || true
+            echo "rc=$rc"
             exit $rc
+
+      - name: Dump crash logcat
+        if: always()
+        run: |
+          echo "===== razban / runtime / native crash lines ====="
+          grep -aE "razban-core|AndroidRuntime|FATAL|--------- beginning of crash|libc :|DEBUG   :|GoLog|panic:|signal [0-9]+|SIGSEGV|SIGABRT|nekohasekai|libbox|VpnService|RazbanVpnService|Exception|tombstone" "$GITHUB_WORKSPACE/logcat-full.txt" | head -120 || echo "(no logcat-full.txt or no matches)"
+          echo "===== END ====="
 
       - name: Show SOCKS log + assert routing
         if: always()

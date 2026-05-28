@@ -73,11 +73,15 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         Notifications.startForeground(this)
         scope.launch {
             try {
+                android.util.Log.d(TAG, "startTunnel: libbox ${Libbox.version()}")
                 val config = ConfigStore.currentConfigJson(this@RazbanVpnService)
                     ?: error("no config imported")
+                android.util.Log.d(TAG, "startTunnel: config loaded (${config.length} chars)")
 
                 val server = Libbox.newCommandServer(this@RazbanVpnService, this@RazbanVpnService)
+                android.util.Log.d(TAG, "startTunnel: command server created")
                 server.start()
+                android.util.Log.d(TAG, "startTunnel: command server started")
                 commandServer = server
 
                 // Per-app entry filter (VPN-level whitelist XOR blacklist).
@@ -90,11 +94,13 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                     if (include.isNotEmpty()) includePackage = StringList(include)
                     else if (exclude.isNotEmpty()) excludePackage = StringList(exclude)
                 }
+                android.util.Log.d(TAG, "startTunnel: startOrReloadService…")
                 server.startOrReloadService(config, override)
+                android.util.Log.d(TAG, "startTunnel: service started OK")
                 status = Status.Started
                 broadcastStatus()
             } catch (t: Throwable) {
-                Libbox.version() // touch lib so the crash log has a version line
+                android.util.Log.e(TAG, "startTunnel FAILED", t)
                 writeDebugMessage("start failed: ${t.message}")
                 stopTunnel()
             }
@@ -156,6 +162,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
      * our own ParcelFileDescriptor to close on teardown.
      */
     override fun openTun(options: TunOptions): Int {
+        android.util.Log.d(TAG, "openTun: enter (mtu=${options.getMTU()}, autoRoute=${options.autoRoute})")
         if (prepare(this) != null) error("VPN permission not granted")
 
         val builder = Builder()
@@ -202,6 +209,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
         val pfd = builder.establish() ?: error("VpnService.Builder.establish() returned null")
         tunFd = pfd
+        android.util.Log.d(TAG, "openTun: established fd=${pfd.fd}")
         return pfd.fd
     }
 
@@ -259,6 +267,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     companion object {
+        const val TAG = "razban-core"
         const val ACTION_STOP = "com.razban.app.STOP"
         const val ACTION_STATUS = "com.razban.app.STATUS"
         const val EXTRA_STATUS = "status"
