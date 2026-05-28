@@ -78,6 +78,13 @@ object ConfigStore {
         }
         root.put("inbounds", inbounds)
 
+        // outbounds — byedpi (the dpi-bypass SOCKS) isn't bundled on Android
+        // yet, so any `dpi-bypass` outbound points at a dead local port. Drop
+        // it and re-point its routing at the tunnel (proxy), so dpi-classified
+        // domains still reach their destination instead of black-holing.
+        val tunnelTag = primaryProxyTag(root)
+        stripDpiBypass(root, tunnelTag)
+
         // route
         val route = root.optJSONObject("route")
         if (route != null) {
@@ -89,6 +96,45 @@ object ConfigStore {
         ensureDns(root)
 
         return root.toString(2)
+    }
+
+    /** The selector/urltest tag that represents "the tunnel" (what dpi should
+     *  fall back to). Prefers a `selector`/`urltest` outbound; else "proxy". */
+    private fun primaryProxyTag(root: JSONObject): String {
+        val outs = root.optJSONArray("outbounds") ?: return "proxy"
+        for (i in 0 until outs.length()) {
+            val o = outs.optJSONObject(i) ?: continue
+            val t = o.optString("type")
+            if (t == "selector" || t == "urltest") return o.optString("tag", "proxy")
+        }
+        // fall back to any tag literally named "proxy"
+        for (i in 0 until outs.length()) {
+            val o = outs.optJSONObject(i) ?: continue
+            if (o.optString("tag") == "proxy") return "proxy"
+        }
+        return "proxy"
+    }
+
+    private fun stripDpiBypass(root: JSONObject, tunnelTag: String) {
+        // 1) remove the dpi-bypass outbound(s)
+        val outs = root.optJSONArray("outbounds")
+        if (outs != null) {
+            val kept = JSONArray()
+            for (i in 0 until outs.length()) {
+                val o = outs.optJSONObject(i) ?: continue
+                if (o.optString("tag") == "dpi-bypass") continue
+                kept.put(o)
+            }
+            root.put("outbounds", kept)
+        }
+        // 2) re-point any route rule / final that used it
+        val route = root.optJSONObject("route") ?: return
+        if (route.optString("final") == "dpi-bypass") route.put("final", tunnelTag)
+        val rules = route.optJSONArray("rules") ?: return
+        for (i in 0 until rules.length()) {
+            val r = rules.optJSONObject(i) ?: continue
+            if (r.optString("outbound") == "dpi-bypass") r.put("outbound", tunnelTag)
+        }
     }
 
     private fun ensureDns(root: JSONObject) {

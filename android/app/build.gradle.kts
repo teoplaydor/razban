@@ -14,6 +14,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         // Only ship the ABIs sing-box's libbox + byedpi are built for.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -91,6 +93,10 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
 }
 
 // Fail early with a human message if libbox.aar wasn't produced.

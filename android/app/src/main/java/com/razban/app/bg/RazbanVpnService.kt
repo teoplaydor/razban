@@ -51,7 +51,10 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     @Volatile
     var status: Status = Status.Stopped
-        private set
+        private set(value) {
+            field = value
+            lastStatus = value   // mirror to a static so instrumented tests can poll
+        }
 
     enum class Status { Stopped, Starting, Started, Stopping }
 
@@ -190,10 +193,12 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         // libbox surfaces them back through TunOptions too).
         options.includePackage.let { while (it.hasNext()) tryAddAllowed(builder, it.next()) }
         options.excludePackage.let { while (it.hasNext()) tryAddDisallowed(builder, it.next()) }
-        // Never capture our own traffic — the in-process byedpi desync sockets
-        // and the command socket must reach the wire directly (Android analog
-        // of the ciadpi.exe / Razban.exe anti-loop process rules on desktop).
-        tryAddDisallowed(builder, packageName)
+        // NOTE: we intentionally do NOT exclude our own package. The command
+        // channel is a unix socket (not network), so it isn't captured by the
+        // TUN, and routing our own update/probe traffic through the tunnel is
+        // fine for a privacy tool. (When byedpi is bundled later it gets its
+        // own process-name/uid exclusion — see TODO.) Keeping self IN the tun
+        // is also what lets the instrumented VPN test generate routable traffic.
 
         val pfd = builder.establish() ?: error("VpnService.Builder.establish() returned null")
         tunFd = pfd
@@ -257,5 +262,11 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         const val ACTION_STOP = "com.razban.app.STOP"
         const val ACTION_STATUS = "com.razban.app.STATUS"
         const val EXTRA_STATUS = "status"
+
+        /** Last status, readable from the test process (same process as the
+         *  service). Not for production logic — UI uses the broadcast. */
+        @Volatile
+        var lastStatus: Status = Status.Stopped
+            private set
     }
 }
