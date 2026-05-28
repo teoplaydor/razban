@@ -1,0 +1,94 @@
+package com.razban.app.bg
+
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkCapabilities
+import io.nekohasekai.libbox.InterfaceUpdateListener
+import io.nekohasekai.libbox.Libbox
+import io.nekohasekai.libbox.NetworkInterface
+import io.nekohasekai.libbox.NetworkInterfaceIterator
+import java.util.Collections
+
+/**
+ * Feeds the sing-box core the current default physical network — the Android
+ * analog of the desktop `default_interface` pin + DetectPhysicalDefaultInterface
+ * PowerShell pass. Here the OS hands us the default network via a
+ * ConnectivityManager callback, so there is no heuristic to get wrong.
+ */
+object DefaultNetworkMonitor {
+
+    @Volatile
+    var currentNetwork: Network? = null
+        private set
+
+    private var callback: ConnectivityManager.NetworkCallback? = null
+    private var listener: InterfaceUpdateListener? = null
+
+    fun start(context: Context, l: InterfaceUpdateListener) {
+        listener = l
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                currentNetwork = network
+                update(context, network)
+            }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                currentNetwork = network
+                update(context, network)
+            }
+            override fun onLost(network: Network) {
+                if (currentNetwork == network) {
+                    currentNetwork = null
+                    listener?.updateDefaultInterface("", -1, false, false)
+                }
+            }
+        }
+        callback = cb
+        try { cm.registerDefaultNetworkCallback(cb) } catch (_: Exception) {}
+    }
+
+    fun stop(context: Context) {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        callback?.let { try { cm?.unregisterNetworkCallback(it) } catch (_: Exception) {} }
+        callback = null
+        listener = null
+    }
+
+    private fun update(context: Context, network: Network) {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+        val lp: LinkProperties = cm.getLinkProperties(network) ?: return
+        val name = lp.interfaceName ?: return
+        val index = try { java.net.NetworkInterface.getByName(name)?.index ?: 0 } catch (_: Exception) { 0 }
+        val caps = cm.getNetworkCapabilities(network)
+        val expensive = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)?.not() ?: false
+        listener?.updateDefaultInterface(name, index, expensive, false)
+    }
+
+    /** Snapshot of all interfaces, for the core's interface enumeration. */
+    fun interfaces(context: Context): NetworkInterfaceIterator {
+        val out = ArrayList<NetworkInterface>()
+        try {
+            for (ni in Collections.list(java.net.NetworkInterface.getNetworkInterfaces())) {
+                if (!ni.isUp) continue
+                val addrs = ArrayList<String>()
+                for (ia in ni.interfaceAddresses) {
+                    val host = ia.address?.hostAddress ?: continue
+                    addrs.add("$host/${ia.networkPrefixLength}")
+                }
+                out.add(NetworkInterface().apply {
+                    name = ni.name
+                    index = ni.index
+                    mtu = try { ni.mtu } catch (_: Exception) { 1500 }
+                    addresses = StringList(addrs)
+                    flags = 0
+                    type = Libbox.InterfaceTypeOther
+                    dnsServer = StringList(emptyList())
+                    metered = false
+                })
+            }
+        } catch (_: Exception) {}
+        return NetIfaceList(out)
+    }
+}

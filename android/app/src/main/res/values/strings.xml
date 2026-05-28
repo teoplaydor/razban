@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Razban</string>
+    <string name="tagline">Network privacy utility</string>
+
+    <string name="status_ready">Готов к подключению</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="status_connected">Подключено</string>
+    <string name="status_disconnecting">Отключение…</string>
+    <string name="status_no_config">Конфигурация не импортирована</string>
+
+    <string name="action_connect">Подключить</string>
+    <string name="action_disconnect">Отключить</string>
+    <string name="action_import">Импорт</string>
+    <string name="action_import_clipboard">Импорт конфигурации из буфера</string>
+
+    <string name="per_app_title">Приложения вне туннеля</string>
+
+    <string name="notif_connecting">Подключение…</string>
+
+    <string name="no_config_title">Нет конфигурации</string>
+    <string name="no_config_body">Скопируйте sing-box конфигурацию в буфер обмена и нажмите «Импорт».</string>
+
+    <string name="import_ok">Конфигурация импортирована</string>
+    <string name="err_import">Ошибка импорта: %1$s</string>
+    <string name="err_clipboard_empty">В буфере нет JSON-конфигурации</string>
+    <string name="err_no_permission">Нет разрешения на VPN</string>
+
+    <string name="disclaimer">Утилита сетевой защиты. Не предназначена для доступа к ресурсам, ограниченным применимым законодательством. Предоставляется «как есть».</string>
+</resources>
