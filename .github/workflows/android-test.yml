@@ -77,21 +77,25 @@ jobs:
             set +e
             # Stream logcat to a file from the START (survives a script abort,
             # captures a native crash that a post-hoc `logcat -d` would miss).
-            adb logcat -v threadtime > "$GITHUB_WORKSPACE/logcat-full.txt" 2>&1 &
+            adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/logcat-full.txt" 2>&1 &
             LOGCAT_PID=$!
             # Run the instrumented VPN-flow test (it self-grants ACTIVATE_VPN).
             gradle connectedDebugAndroidTest --no-daemon --stacktrace
             rc=$?
             sleep 3
             kill "$LOGCAT_PID" 2>/dev/null
-            echo "rc=$rc; logcat bytes: $(wc -c < "$GITHUB_WORKSPACE/logcat-full.txt" 2>/dev/null)"
+            echo "rc=$rc; logcat bytes: $(wc -c < "$GITHUB_WORKSPACE/android/logcat-full.txt" 2>/dev/null)"
             exit $rc
 
       - name: Dump crash logcat
         if: always()
         run: |
-          echo "===== razban / runtime / native crash lines ====="
-          grep -aE "razban-core|AndroidRuntime|FATAL|--------- beginning of crash|libc :|DEBUG   :|GoLog|panic:|signal [0-9]+|SIGSEGV|SIGABRT|nekohasekai|libbox|VpnService|RazbanVpnService|Exception|tombstone" "$GITHUB_WORKSPACE/logcat-full.txt" | head -120 || echo "(no logcat-full.txt or no matches)"
+          F="$GITHUB_WORKSPACE/android/logcat-full.txt"
+          echo "===== razban + native crash (system spam filtered) ====="
+          grep -aE "razban|nekohasekai|libbox|Fatal signal|SIGSEGV|SIGABRT|F DEBUG|F libc| DEBUG :| libc :|AndroidRuntime|GoLog|panic|art::|dlopen|UnsatisfiedLink|tombstone|beginning of crash" "$F" \
+            | grep -avE "RcsClientLib|MDM |ConnectionTracker|ModernMediaScanner|constellation|anjr|StrictMode" | head -200 || echo "(none)"
+          echo "===== last 40 lines of full logcat ====="
+          tail -40 "$F" 2>/dev/null || true
           echo "===== END ====="
 
       - name: Show SOCKS log + assert routing
