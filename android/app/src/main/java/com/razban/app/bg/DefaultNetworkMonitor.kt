@@ -77,15 +77,17 @@ object DefaultNetworkMonitor {
                     val host = ia.address?.hostAddress ?: continue
                     addrs.add("$host/${ia.networkPrefixLength}")
                 }
+                // Use explicit gomobile setters — acronym fields (MTU, DNSServer)
+                // don't map cleanly to Kotlin property syntax.
                 out.add(NetworkInterface().apply {
-                    name = ni.name
-                    index = ni.index
-                    mtu = try { ni.mtu } catch (_: Exception) { 1500 }
-                    addresses = StringList(addrs)
-                    flags = 0
-                    type = Libbox.InterfaceTypeOther
-                    dnsServer = StringList(emptyList())
-                    metered = false
+                    setName(ni.name)
+                    setIndex(ni.index)
+                    setMTU(try { ni.mtu } catch (_: Exception) { 1500 })
+                    setAddresses(StringList(addrs))
+                    setFlags(0)
+                    setType(Libbox.InterfaceTypeOther)
+                    setDNSServer(StringList(emptyList()))
+                    setMetered(false)
                 })
             }
         } catch (_: Exception) {}

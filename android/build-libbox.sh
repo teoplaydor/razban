@@ -29,6 +29,7 @@ go install "github.com/sagernet/gomobile/cmd/gomobile@${GOMOBILE_VER}"
 go install "github.com/sagernet/gomobile/cmd/gobind@${GOMOBILE_VER}"
 export PATH="$PATH:$(go env GOPATH)/bin"
 
+mkdir -p "$HERE/app/libs"   # not tracked in git (empty dir); gomobile -o needs it
 TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_low_memory"
 echo "==> gomobile bind (tags: $TAGS)"
 gomobile bind -v \

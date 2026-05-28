@@ -157,7 +157,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
         val builder = Builder()
             .setSession("Razban")
-            .setMtu(options.mtu)               // authoritative MSS clamp on Android — no wintun 65535 quirk
+            .setMtu(options.getMTU())          // authoritative MSS clamp on Android — no wintun 65535 quirk
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
 
@@ -169,7 +169,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             // DNS: the tun's own DNS hijack address (tun_addr + 1). sing-box's
             // dns module answers it; queries never leave through a leaky path.
             try {
-                val dns = options.dnsServerAddress // StringBox, throws if prefix == /32
+                val dns = options.getDNSServerAddress() // StringBox, throws if prefix == /32
                 builder.addDnsServer(dns.value)
             } catch (_: Throwable) { /* config provides explicit dns.servers as fallback */ }
 
