@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.NetworkInterface
@@ -46,7 +47,17 @@ object DefaultNetworkMonitor {
             }
         }
         callback = cb
-        try { cm.registerDefaultNetworkCallback(cb) } catch (_: Exception) {}
+        // CRITICAL: track the underlying PHYSICAL network, NOT the VPN. Once
+        // our VpnService is up, registerDefaultNetworkCallback would report the
+        // VPN itself as "default" → the core would bind its outbound sockets to
+        // the tun → every dial loops back into the tunnel and is reset (no
+        // egress, DNS fails). Requiring NET_CAPABILITY_NOT_VPN makes the
+        // callback follow the real Wi-Fi/cellular network underneath.
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        try { cm.registerNetworkCallback(request, cb) } catch (_: Exception) {}
     }
 
     fun stop(context: Context) {
