@@ -176,6 +176,15 @@ object ConfigStore {
             route.put("auto_detect_interface", true)
         }
 
+        // rule_set — the desktop config references local .srs files by ABSOLUTE
+        // DESKTOP paths (C:\...\assets\geo\*.srs) that don't exist on the phone.
+        // sing-box FATALs at startup trying to open them → tunnel never comes up.
+        // Drop the rule_set declarations AND the route/dns rules that reference
+        // them. The per-domain routing (the big domain_suffix snapshot + the
+        // ColdBoot RU-direct entries baked into route.rules) stays intact and
+        // covers the important cases; only geoip-based fallbacks are lost.
+        stripRuleSets(root)
+
         // dns — the desktop config points DNS at its loopback classifier
         // (127.0.0.1:5354) which doesn't exist on the phone. Replace the whole
         // block with a clean Android upstream chain (Yandex survives most RU
@@ -183,6 +192,25 @@ object ConfigStore {
         replaceDns(root)
 
         return root.toString(2)
+    }
+
+    private fun stripRuleSets(root: JSONObject) {
+        root.optJSONObject("route")?.let {
+            it.remove("rule_set")
+            filterOutRuleSetRules(it)
+        }
+        root.optJSONObject("dns")?.let { filterOutRuleSetRules(it) }
+    }
+
+    private fun filterOutRuleSetRules(holder: JSONObject) {
+        val rules = holder.optJSONArray("rules") ?: return
+        val kept = JSONArray()
+        for (i in 0 until rules.length()) {
+            val r = rules.optJSONObject(i) ?: continue
+            if (r.has("rule_set")) continue   // references a now-removed .srs set
+            kept.put(r)
+        }
+        holder.put("rules", kept)
     }
 
     /** The selector/urltest tag that represents "the tunnel" (what dpi should
