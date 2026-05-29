@@ -43,6 +43,7 @@ class WebUiBridge(
                 val method = msg.optString("method")
                 val params = msg.opt("params")
                 val result = handle(method, params)
+                android.util.Log.d("razban-bridge", "rpc $method -> ${result?.toString()?.take(160)}")
                 if (id != null) reply(id, result, null)
             } catch (t: Throwable) {
                 if (id != null) reply(id!!, null, t.message ?: "error")
