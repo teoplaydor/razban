@@ -40,6 +40,10 @@ class RazbanApp : Application() {
         // on keeps the GC aggressive so a backgrounded tunnel survives Android's
         // memory pressure without being killed.
         Libbox.setMemoryLimit(true)
+
+        // Seed the bundled default config on first run so the phone can connect
+        // instantly without an import step.
+        try { com.razban.app.config.ConfigStore.ensureDefaultConfig(this) } catch (_: Exception) {}
     }
 
     companion object {

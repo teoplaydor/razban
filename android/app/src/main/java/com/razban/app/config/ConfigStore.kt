@@ -18,12 +18,36 @@ object ConfigStore {
 
     private const val FILE = "current-config.json"
     private const val PREFS = "razban"
+    private const val BUNDLED_ASSET = "default-config.json"
 
-    fun hasConfig(context: Context): Boolean = File(context.filesDir, FILE).exists()
+    /** True if an imported config exists OR a default config is bundled in the
+     *  APK assets (so the app works out-of-the-box without any import). */
+    fun hasConfig(context: Context): Boolean =
+        File(context.filesDir, FILE).exists() || hasBundledDefault(context)
+
+    /** Seed the active config from the bundled default on first run, so the
+     *  phone connects instantly without an import step. Idempotent: only writes
+     *  if there's no config yet. Called from RazbanApp.onCreate. */
+    fun ensureDefaultConfig(context: Context) {
+        if (File(context.filesDir, FILE).exists()) return
+        val raw = readBundledDefault(context) ?: return
+        try { importConfig(context, raw) } catch (_: Exception) {}
+    }
+
+    private fun hasBundledDefault(context: Context): Boolean = try {
+        context.assets.open(BUNDLED_ASSET).use { it.read() >= 0 }
+    } catch (_: Exception) { false }
+
+    private fun readBundledDefault(context: Context): String? = try {
+        context.assets.open(BUNDLED_ASSET).use { it.readBytes().toString(Charsets.UTF_8) }
+    } catch (_: Exception) { null }
 
     fun currentConfigJson(context: Context): String? {
         val f = File(context.filesDir, FILE)
-        return if (f.exists()) f.readText() else null
+        if (f.exists()) return f.readText()
+        // Fall back to the bundled default (adapted), persisting it for next time.
+        val raw = readBundledDefault(context) ?: return null
+        return try { val a = adaptForAndroid(raw); f.writeText(a); a } catch (_: Exception) { null }
     }
 
     /** Import a sing-box config (pasted text / file / URL body). Adapts and
@@ -92,8 +116,11 @@ object ConfigStore {
             route.put("auto_detect_interface", true)
         }
 
-        // dns — guarantee a working upstream chain with detour=direct
-        ensureDns(root)
+        // dns — the desktop config points DNS at its loopback classifier
+        // (127.0.0.1:5354) which doesn't exist on the phone. Replace the whole
+        // block with a clean Android upstream chain (Yandex survives most RU
+        // ISP resolver blocks; then the global fallbacks), all detour=direct.
+        replaceDns(root)
 
         return root.toString(2)
     }
@@ -137,18 +164,17 @@ object ConfigStore {
         }
     }
 
-    private fun ensureDns(root: JSONObject) {
-        val dns = root.optJSONObject("dns") ?: JSONObject().also { root.put("dns", it) }
-        val servers = dns.optJSONArray("servers") ?: JSONArray().also { dns.put("servers", it) }
-        if (servers.length() == 0) {
-            // Yandex first — it survives most RU ISP resolver blocks; then the
-            // global fallbacks. All direct so DNS doesn't tunnel.
-            for (addr in listOf("77.88.8.8", "1.1.1.1", "8.8.8.8")) {
-                servers.put(JSONObject().apply {
-                    put("address", addr)
-                    put("detour", "direct")
-                })
-            }
+    private fun replaceDns(root: JSONObject) {
+        val servers = JSONArray()
+        for (addr in listOf("77.88.8.8", "1.1.1.1", "8.8.8.8")) {
+            servers.put(JSONObject().apply {
+                put("address", addr)
+                put("detour", "direct")
+            })
         }
+        root.put("dns", JSONObject().apply {
+            put("servers", servers)
+            put("strategy", "prefer_ipv4")
+        })
     }
 }

@@ -44,6 +44,16 @@ jobs:
           yes | sdkmanager "ndk;28.0.13004108" "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >> "$GITHUB_ENV"
 
+      - name: Inject bundled default config (from secret)
+        run: |
+          if [ -n "${{ secrets.DEFAULT_CONFIG_GZ_B64 }}" ]; then
+            mkdir -p android/app/src/main/assets
+            echo "${{ secrets.DEFAULT_CONFIG_GZ_B64 }}" | base64 -d | gunzip > android/app/src/main/assets/default-config.json
+            echo "bundled config bytes: $(wc -c < android/app/src/main/assets/default-config.json)"
+          else
+            echo "no DEFAULT_CONFIG_GZ_B64 secret — building without a bundled config"
+          fi
+
       - name: Build libbox.aar
         run: bash android/build-libbox.sh "$SING_BOX_TAG"
 
