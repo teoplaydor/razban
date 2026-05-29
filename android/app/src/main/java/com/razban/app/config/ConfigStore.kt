@@ -103,6 +103,10 @@ object ConfigStore {
                     val o = arr.optJSONObject(i) ?: continue
                     val type = o.optString("type")
                     if (type !in realTypes) continue
+                    // Skip inner/wrapped layers (e.g. the shadowsocks inside a
+                    // ShadowTLS outbound has detour=<shadowtls-tag>). They're not
+                    // user-facing protocols — only the outer one is.
+                    if (o.optString("detour", "").isNotEmpty()) continue
                     val tag = o.optString("tag", type)
                     val server = o.optString("server", o.optString("address", ""))
                     val port = o.optInt("server_port", o.optInt("port", 0))

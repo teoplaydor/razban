@@ -92,6 +92,15 @@ class WebUiBridge(
         // protocol outbounds so the Servers tab shows them (not "0 of 0").
         "servers.list" -> serversJson()
         "bundles.list" -> bundlesJson()
+        // Live per-protocol health for the bundle card. We don't have the admin
+        // agent on the phone, so reflect the tunnel state: when connected, the
+        // bundle's protocols are reachable (sing-box's urltest is actively
+        // picking among them). Shows "N of N доступно" instead of "0 of N".
+        "bundles.health" -> bundleHealth()
+        // Selecting the bundle: on Android there's a single bundle = the active
+        // config, and sing-box auto-rotates protocols via urltest. Acknowledge.
+        "servers.setActive", "bundles.setActive" -> true
+        "bundles.delete", "servers.remove" -> true   // no-op: don't delete the bundled config
         "subscriptions.list" -> JSONArray()
 
         // Config import path the React UI can call (we also keep clipboard import
@@ -180,17 +189,32 @@ class WebUiBridge(
         val protos = ConfigStore.protocolOutbounds(ctx)
         if (protos.isNotEmpty()) {
             val endpoints = JSONArray()
+            var prio = 0
             for ((tag, type, addr) in protos) {
                 endpoints.put(JSONObject().put("tag", tag).put("protocol", type)
-                    .put("server", addr.first).put("port", addr.second))
+                    .put("server", addr.first).put("port", addr.second)
+                    .put("priority", prio++))
             }
             arr.put(JSONObject()
                 .put("id", "bundle").put("name", "Razban (мульти-протокол)")
+                .put("host", protos.firstOrNull()?.third?.first ?: "")
                 .put("active", true)
                 .put("protocolCount", protos.size)
                 .put("endpoints", endpoints))
         }
         return arr
+    }
+
+    /** {endpoints:[{tag, ok, latencyMs}]} — the bundle card's "N доступно".
+     *  Connected ⇒ all protocols reachable (urltest is live among them). */
+    private fun bundleHealth(): JSONObject {
+        val connected = RazbanVpnService.lastStatus == RazbanVpnService.Status.Started
+        val endpoints = JSONArray()
+        for ((tag, _, _) in ConfigStore.protocolOutbounds(ctx)) {
+            endpoints.put(JSONObject().put("tag", tag).put("ok", connected)
+                .put("latencyMs", if (connected) 1 else 0))
+        }
+        return JSONObject().put("endpoints", endpoints)
     }
 
     private fun importConfig(params: Any?) {
