@@ -114,6 +114,24 @@ class WebUiActivity : AppCompatActivity() {
         super.onResume()
         ContextCompat.registerReceiver(this, statusReceiver,
             IntentFilter(RazbanVpnService.ACTION_STATUS), ContextCompat.RECEIVER_NOT_EXPORTED)
+        // Reliable import path that needs no UI rebuild: if there is no config
+        // yet and the clipboard holds a sing-box config JSON (our exported
+        // bundle), auto-import it. Runs only while config is absent, so the
+        // clipboard isn't re-read (and no repeated "pasted" toast) afterwards.
+        web.postDelayed({ maybeImportConfigFromClipboard() }, 700)
+    }
+
+    private fun maybeImportConfigFromClipboard() {
+        if (ConfigStore.hasConfig(this)) return
+        try {
+            val cm = getSystemService(android.content.ClipboardManager::class.java) ?: return
+            val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim() ?: return
+            if (!text.startsWith("{") || !text.contains("\"outbounds\"")) return
+            ConfigStore.importConfig(this, text)
+            android.widget.Toast.makeText(this, "Конфигурация импортирована из буфера", android.widget.Toast.LENGTH_LONG).show()
+            bridge.pushEvent("vpn.log", "Конфигурация импортирована из буфера")
+            bridge.pushEvent("servers.changed", true)
+        } catch (_: Exception) {}
     }
 
     override fun onPause() {

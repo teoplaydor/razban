@@ -99,6 +99,23 @@ class WebUiBridge(
         "config.import" -> { importConfig(params); true }
         "config.hasConfig" -> ConfigStore.hasConfig(ctx)
 
+        // The Servers page "Из буфера" button calls servers.addMany({text}).
+        // On Android the pasted text is a full sing-box config JSON (an exported
+        // bundle), not a list of URIs — import it as the active config.
+        "servers.addMany", "servers.add" -> {
+            val text = when (params) {
+                is JSONObject -> params.optString("text", params.optString("config", ""))
+                is String -> params
+                else -> ""
+            }
+            if (text.trimStart().startsWith("{") && text.contains("\"outbounds\"")) {
+                ConfigStore.importConfig(ctx, text)
+                JSONObject().put("count", 1)
+            } else {
+                JSONObject().put("count", 0)
+            }
+        }
+
         // Data-heavy desktop tabs — benign empties for now (filled per iteration).
         "apps.connections" -> JSONArray()
         "processes.all", "processes.running", "processes.installed" -> JSONArray()
