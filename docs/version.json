@@ -17,9 +17,9 @@
   },
   "android": {
     "available": true,
-    "version": "0.1.8",
-    "url": "https://github.com/teoplaydor/razban/releases/download/android-v0.1.8/Razban-0.1.8.apk",
+    "version": "0.1.10",
+    "url": "https://github.com/teoplaydor/razban/releases/download/android-v0.1.10/Razban-0.1.10.apk",
     "size": 124666009,
-    "sha256": "57d8714e37e645d6c87e0cd10ee65005e8ea662e589d40eb9b4564f4c8ba9de0"
+    "sha256": "9c6e0297f3ca5b69c62fee1785ea4aa54242f87fd854ddb1b82ee948eab089e2"
   }
 }
