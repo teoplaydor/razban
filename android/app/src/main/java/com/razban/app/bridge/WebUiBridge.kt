@@ -88,9 +88,9 @@ class WebUiBridge(
         "clipboard.read" -> readClipboard()
         "clipboard.write" -> { writeClipboard((params as? JSONObject)?.optString("text") ?: params?.toString() ?: ""); true }
 
-        // Servers/bundles: the phone runs an imported sing-box config (a bundle).
-        // Surface it minimally so the UI shows "connected to bundle".
-        "servers.list" -> JSONObject().put("servers", JSONArray()).put("groups", JSONArray())
+        // Servers/bundles: the phone runs a bundled sing-box config. Surface its
+        // protocol outbounds so the Servers tab shows them (not "0 of 0").
+        "servers.list" -> serversJson()
         "bundles.list" -> bundlesJson()
         "subscriptions.list" -> JSONArray()
 
@@ -163,11 +163,32 @@ class WebUiBridge(
             .putString("routingMode", o.optString("routingMode", "Smart")).apply()
     }
 
+    private fun serversJson(): JSONObject {
+        val servers = JSONArray()
+        for ((tag, type, addr) in ConfigStore.protocolOutbounds(ctx)) {
+            servers.put(JSONObject()
+                .put("id", tag).put("name", tag).put("protocol", type)
+                .put("server", addr.first).put("port", addr.second)
+                .put("pingMs", 0)
+                .put("reality", JSONObject().put("enabled", type == "vless")))
+        }
+        return JSONObject().put("servers", servers).put("groups", JSONArray())
+    }
+
     private fun bundlesJson(): JSONArray {
         val arr = JSONArray()
-        if (ConfigStore.hasConfig(ctx)) {
-            arr.put(JSONObject().put("id", "imported").put("name", "Импортированный бандл")
-                .put("active", true).put("endpoints", JSONArray()))
+        val protos = ConfigStore.protocolOutbounds(ctx)
+        if (protos.isNotEmpty()) {
+            val endpoints = JSONArray()
+            for ((tag, type, addr) in protos) {
+                endpoints.put(JSONObject().put("tag", tag).put("protocol", type)
+                    .put("server", addr.first).put("port", addr.second))
+            }
+            arr.put(JSONObject()
+                .put("id", "bundle").put("name", "Razban (мульти-протокол)")
+                .put("active", true)
+                .put("protocolCount", protos.size)
+                .put("endpoints", endpoints))
         }
         return arr
     }

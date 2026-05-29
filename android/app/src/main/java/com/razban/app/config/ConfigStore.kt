@@ -25,14 +25,41 @@ object ConfigStore {
     fun hasConfig(context: Context): Boolean =
         File(context.filesDir, FILE).exists() || hasBundledDefault(context)
 
-    /** Seed the active config from the bundled default on first run, so the
-     *  phone connects instantly without an import step. Idempotent: only writes
-     *  if there's no config yet. Called from RazbanApp.onCreate. */
+    /** Seed/refresh the active config from the bundled default. Called from
+     *  RazbanApp.onCreate. Behaviour:
+     *   - no config yet → seed from bundle.
+     *   - app was updated AND the current config came from the bundle (user
+     *     didn't import their own) → RE-SEED from the new bundle. This is the
+     *     fix for "updated the app but the config/protocols didn't change":
+     *     an install-over-old keeps filesDir, so without this the stale config
+     *     persisted. No manual uninstall needed anymore.
+     *   - user imported their own config → never overwrite it. */
     fun ensureDefaultConfig(context: Context) {
-        if (File(context.filesDir, FILE).exists()) return
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val f = File(context.filesDir, FILE)
+        val curVer = currentVersionCode(context)
+        val fromBundle = prefs.getBoolean("config_from_bundle", false)
+        val seededVer = prefs.getInt("seeded_config_version", -1)
+        // "Unknown provenance" = installed before this tracking existed (≤0.1.3).
+        // Treat it as bundle-eligible so a one-time re-seed fixes the stale
+        // config carried over an install-over-old.
+        val unknownProvenance = !prefs.contains("config_from_bundle")
+        val needSeed = !f.exists() || ((fromBundle || unknownProvenance) && seededVer != curVer)
+        if (!needSeed) return
         val raw = readBundledDefault(context) ?: return
-        try { importConfig(context, raw) } catch (_: Exception) {}
+        try {
+            f.writeText(adaptForAndroid(raw))
+            prefs.edit()
+                .putBoolean("config_from_bundle", true)
+                .putInt("seeded_config_version", curVer)
+                .apply()
+        } catch (_: Exception) {}
     }
+
+    private fun currentVersionCode(context: Context): Int = try {
+        val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+        if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode.toInt() else @Suppress("DEPRECATION") pi.versionCode
+    } catch (_: Exception) { -1 }
 
     private fun hasBundledDefault(context: Context): Boolean = try {
         context.assets.open(BUNDLED_ASSET).use { it.read() >= 0 }
@@ -51,10 +78,39 @@ object ConfigStore {
     }
 
     /** Import a sing-box config (pasted text / file / URL body). Adapts and
-     *  persists it. Throws if the JSON is unparseable. */
+     *  persists it. Marks the config as user-provided so app updates won't
+     *  overwrite it with the bundled default. Throws if the JSON is unparseable. */
     fun importConfig(context: Context, json: String) {
         val adapted = adaptForAndroid(json)
         File(context.filesDir, FILE).writeText(adapted)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean("config_from_bundle", false).apply()
+    }
+
+    /** Parsed view of the active config's protocol outbounds, for the Servers
+     *  UI (so it shows the bundle's protocols instead of "0 of 0"). */
+    fun protocolOutbounds(context: Context): List<Triple<String, String, Pair<String, Int>>> {
+        val json = currentConfigJson(context) ?: return emptyList()
+        val out = ArrayList<Triple<String, String, Pair<String, Int>>>()
+        try {
+            val root = JSONObject(json)
+            val realTypes = setOf("vless", "vmess", "trojan", "hysteria2", "hysteria",
+                "tuic", "anytls", "shadowtls", "shadowsocks", "wireguard")
+            // sing-box 1.13 puts servers in "outbounds" and/or "endpoints".
+            for (key in listOf("outbounds", "endpoints")) {
+                val arr = root.optJSONArray(key) ?: continue
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val type = o.optString("type")
+                    if (type !in realTypes) continue
+                    val tag = o.optString("tag", type)
+                    val server = o.optString("server", o.optString("address", ""))
+                    val port = o.optInt("server_port", o.optInt("port", 0))
+                    out.add(Triple(tag, type, server to port))
+                }
+            }
+        } catch (_: Exception) {}
+        return out
     }
 
     fun includePackages(context: Context): List<String> =
