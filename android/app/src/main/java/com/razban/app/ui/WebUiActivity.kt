@@ -111,14 +111,18 @@ class WebUiActivity : AppCompatActivity() {
 
         web.loadUrl("https://appassets.androidplatform.net/webui/index.html")
 
-        // Instant auto-connect: a default config is bundled, so once the user
-        // has granted VPN consent (any prior session), the tunnel comes up on
-        // launch without a tap. First launch: prepare()!=null → we skip and the
-        // user taps Connect once (which shows the consent dialog).
+        // Instant auto-connect. A default config is bundled, so on launch we
+        // bring the tunnel up by ourselves. CRITICAL: on the FIRST launch
+        // VpnService.prepare() returns a consent Intent — we MUST launch it to
+        // show Android's VPN permission dialog (otherwise the tunnel never
+        // establishes and every protocol shows "no connection"). After the user
+        // taps OK once, prepare() returns null and subsequent launches connect
+        // silently.
         web.postDelayed({
             if (RazbanVpnService.lastStatus == RazbanVpnService.Status.Stopped &&
-                ConfigStore.hasConfig(this) && VpnService.prepare(this) == null) {
-                startVpn()
+                ConfigStore.hasConfig(this)) {
+                val prep = VpnService.prepare(this)
+                if (prep == null) startVpn() else try { vpnConsent.launch(prep) } catch (_: Exception) {}
             }
         }, 1200)
 
