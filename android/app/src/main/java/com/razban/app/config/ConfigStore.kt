@@ -185,11 +185,12 @@ object ConfigStore {
         // covers the important cases; only geoip-based fallbacks are lost.
         stripRuleSets(root)
 
-        // dns — the desktop config points DNS at its loopback classifier
-        // (127.0.0.1:5354) which doesn't exist on the phone. Replace the whole
-        // block with a clean Android upstream chain (Yandex survives most RU
-        // ISP resolver blocks; then the global fallbacks), all detour=direct.
-        replaceDns(root)
+        // dns — surgically remove only the desktop loopback classifier
+        // (razban-classify on 127.0.0.1:5354) if present, keeping the real
+        // tagged servers (dns-direct/dns-proxy) intact. Replacing the whole
+        // block broke `route.default_domain_resolver=dns-direct` (the tag
+        // vanished → "default domain resolver not found").
+        adaptDns(root)
 
         return root.toString(2)
     }
@@ -252,17 +253,49 @@ object ConfigStore {
         }
     }
 
-    private fun replaceDns(root: JSONObject) {
-        val servers = JSONArray()
-        for (addr in listOf("77.88.8.8", "1.1.1.1", "8.8.8.8")) {
-            servers.put(JSONObject().apply {
-                put("address", addr)
-                put("detour", "direct")
-            })
+    private fun adaptDns(root: JSONObject) {
+        val dns = root.optJSONObject("dns") ?: run {
+            // No dns block at all → add a minimal working one.
+            root.put("dns", JSONObject()
+                .put("servers", JSONArray()
+                    .put(JSONObject().put("tag", "dns-direct").put("type", "udp").put("server", "8.8.8.8")))
+                .put("final", "dns-direct").put("strategy", "ipv4_only"))
+            return
         }
-        root.put("dns", JSONObject().apply {
-            put("servers", servers)
-            put("strategy", "prefer_ipv4")
-        })
+        val servers = dns.optJSONArray("servers") ?: JSONArray().also { dns.put("servers", it) }
+        val removedTags = HashSet<String>()
+        val kept = JSONArray()
+        for (i in 0 until servers.length()) {
+            val s = servers.optJSONObject(i) ?: continue
+            val addr = s.optString("server", s.optString("address", ""))
+            val tag = s.optString("tag")
+            // Drop the desktop loopback classifier (doesn't exist on Android).
+            val isLoopback = addr.startsWith("127.") || addr.contains("localhost") ||
+                addr.contains("5354") || tag.contains("classify", true) || tag.contains("razban", true)
+            if (isLoopback) { if (tag.isNotEmpty()) removedTags.add(tag) } else kept.put(s)
+        }
+        if (kept.length() == 0) {
+            kept.put(JSONObject().put("tag", "dns-direct").put("type", "udp").put("server", "8.8.8.8"))
+            kept.put(JSONObject().put("tag", "dns-proxy").put("type", "tls").put("server", "1.1.1.1").put("detour", "proxy"))
+        }
+        dns.put("servers", kept)
+        val firstTag = kept.optJSONObject(0)?.optString("tag")?.ifEmpty { "dns-direct" } ?: "dns-direct"
+
+        // Repoint dns.final / route.default_domain_resolver if they referenced a removed server.
+        if (removedTags.contains(dns.optString("final"))) dns.put("final", firstTag)
+        root.optJSONObject("route")?.let { route ->
+            if (removedTags.contains(route.optString("default_domain_resolver")))
+                route.put("default_domain_resolver", firstTag)
+        }
+        // Drop dns rules pointing at removed servers.
+        dns.optJSONArray("rules")?.let { rules ->
+            val kr = JSONArray()
+            for (i in 0 until rules.length()) {
+                val r = rules.optJSONObject(i) ?: continue
+                if (removedTags.contains(r.optString("server"))) continue
+                kr.put(r)
+            }
+            dns.put("rules", kr)
+        }
     }
 }
