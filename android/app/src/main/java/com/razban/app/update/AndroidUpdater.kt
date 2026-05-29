@@ -123,7 +123,7 @@ object AndroidUpdater {
         }
         try {
             if (c.responseCode != 200) error("HTTP ${c.responseCode}")
-            c.inputStream.use { input -> out.outputStream.use { input.copyTo(it) } }
+            c.inputStream.use { input -> out.outputStream().use { input.copyTo(it) } }
         } finally { c.disconnect() }
         return out
     }
