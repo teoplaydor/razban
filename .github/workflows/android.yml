@@ -79,7 +79,12 @@ jobs:
           RAZBAN_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           RAZBAN_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           RAZBAN_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # The update-channel secret, baked into BuildConfig.UPDATE_KEY so the
+          # app can fetch the gated update manifest. Without this the key is
+          # empty → server 403 → no update check fires.
+          UPDATE_KEY: ${{ secrets.UPDATE_KEY }}
         run: |
+          echo "UPDATE_KEY present: $([ -n "$UPDATE_KEY" ] && echo yes || echo NO)"
           if [ "${{ steps.ks.outputs.present }}" = "true" ]; then
             gradle :app:assembleRelease --no-daemon --stacktrace
             echo "APK_PATH=$(ls app/build/outputs/apk/release/*.apk | head -1)" >> "$GITHUB_ENV"
