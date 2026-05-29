@@ -11,10 +11,15 @@ android {
         applicationId = "com.razban.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.1.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // App-only update channel (secret header gated in Caddy). The key is
+        // injected from the UPDATE_KEY CI secret at build time — never in git.
+        buildConfigField("String", "UPDATE_KEY", "\"${System.getenv("UPDATE_KEY") ?: ""}\"")
+        buildConfigField("String", "UPDATE_URL", "\"https://razban.huyb.ru/app-update/update.json\"")
 
         // Only ship the ABIs sing-box's libbox + byedpi are built for.
         ndk {

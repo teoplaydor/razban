@@ -17,6 +17,8 @@ import android.webkit.WebViewClient
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewCompat
@@ -119,6 +121,13 @@ class WebUiActivity : AppCompatActivity() {
                 startVpn()
             }
         }, 1200)
+
+        // In-app self-update check (private channel). A few seconds after launch
+        // so it never competes with connecting.
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(4000)
+            com.razban.app.update.AndroidUpdater.checkAndPrompt(this@WebUiActivity)
+        }
     }
 
     override fun onResume() {
