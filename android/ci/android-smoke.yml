@@ -61,13 +61,16 @@ jobs:
             adb wait-for-device
             adb logcat -c || true
             gradle :app:installDebug --no-daemon --stacktrace
-            PKG=com.razban.app.debug
-            adb shell appops set $PKG ACTIVATE_VPN allow || true
-            adb shell appops set $PKG REQUEST_INSTALL_PACKAGES allow || true
+            # Hardcode the package (a $PKG var did NOT expand in this runner
+            # context → am got an empty package → nothing launched).
+            adb shell appops set com.razban.app.debug ACTIVATE_VPN allow || true
+            adb shell appops set com.razban.app.debug REQUEST_INSTALL_PACKAGES allow || true
             adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/smoke-logcat.txt" 2>&1 &
             LP=$!
-            adb shell am start -n $PKG/com.razban.app.ui.WebUiActivity
-            sleep 35
+            # monkey reliably launches the package's LAUNCHER activity.
+            adb shell monkey -p com.razban.app.debug -c android.intent.category.LAUNCHER 1 || \
+              adb shell am start -n com.razban.app.debug/com.razban.app.ui.WebUiActivity
+            sleep 40
             kill $LP 2>/dev/null || true
             echo "logcat bytes: $(wc -c < "$GITHUB_WORKSPACE/android/smoke-logcat.txt")"
       - name: Dump key logcat
