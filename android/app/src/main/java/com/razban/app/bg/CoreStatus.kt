@@ -154,17 +154,23 @@ object CoreStatus : CommandClientHandler {
                 val id = ev.getID() ?: continue
                 // A non-zero ClosedAt means the connection ended → drop it.
                 if (ev.closedAt != 0L) { conns.remove(id); continue }
-                val c: Connection = ev.connection ?: continue
-                val host = c.domain?.takeIf { d -> d.isNotEmpty() } ?: hostOf(c.destination)
-                val proc = processName(c)
-                conns[id] = Conn(
-                    host = host,
-                    process = proc,
-                    network = c.network ?: "tcp",
-                    outbound = c.outbound ?: "",
-                    up = c.uplinkTotal,
-                    down = c.downlinkTotal,
-                )
+                val c: Connection? = ev.connection
+                if (c != null) {
+                    // created / full update — upsert with the connection's totals
+                    val host = c.domain?.takeIf { d -> d.isNotEmpty() } ?: hostOf(c.destination)
+                    conns[id] = Conn(
+                        host = host,
+                        process = processName(c),
+                        network = c.network ?: "tcp",
+                        outbound = c.outbound ?: "",
+                        up = c.uplinkTotal,
+                        down = c.downlinkTotal,
+                    )
+                } else {
+                    // delta-only update (Connection omitted) — bump the existing row
+                    // so per-host / per-process rates actually move.
+                    conns[id]?.let { it.up += ev.uplinkDelta; it.down += ev.downlinkDelta }
+                }
             }
         } catch (_: Exception) { /* keep prior snapshot */ }
     }
