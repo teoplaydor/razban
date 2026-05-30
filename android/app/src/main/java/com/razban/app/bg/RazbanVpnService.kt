@@ -105,6 +105,9 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 android.util.Log.d(TAG, "startTunnel: service started OK")
                 status = Status.Started
                 broadcastStatus()
+                // Subscribe to the core's live status stream → real up/down
+                // numbers for the UI (vpn.stats / throughput bars).
+                CoreStatus.start()
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "startTunnel FAILED", t)
                 writeDebugMessage("start failed: ${t.message}")
@@ -130,6 +133,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         if (status == Status.Stopping || status == Status.Stopped) return
         status = Status.Stopping
         scope.launch {
+            CoreStatus.stop()
             try { commandServer?.closeService() } catch (_: Throwable) {}
             try { commandServer?.close() } catch (_: Throwable) {}
             commandServer = null

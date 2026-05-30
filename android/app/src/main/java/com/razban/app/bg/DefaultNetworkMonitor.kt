@@ -111,7 +111,17 @@ object DefaultNetworkMonitor {
                     setIndex(ni.index)
                     setMTU(try { ni.mtu } catch (_: Exception) { 1500 })
                     setAddresses(StringList(addrs))
-                    setFlags(0)
+                    // Linux IFF_* flags. CRITICAL: sing-box filters the available
+                    // interface list by net.FlagUp (route/network.go:291). With
+                    // setFlags(0) EVERY interface looked "down" → the list came back
+                    // empty → the core failed every dial (even outbound/direct) with
+                    // "no available network interface", so the tunnel carried zero
+                    // traffic. We already skip !isUp above, so IFF_UP is always set.
+                    var f = 0x1 /* IFF_UP */
+                    if (ni.isLoopback) f = f or 0x8           /* IFF_LOOPBACK */
+                    if (ni.isPointToPoint) f = f or 0x10      /* IFF_POINTOPOINT */
+                    if (try { ni.supportsMulticast() } catch (_: Exception) { false }) f = f or 0x1000 /* IFF_MULTICAST */
+                    setFlags(f)
                     setType(Libbox.InterfaceTypeOther)
                     setDNSServer(StringList(emptyList()))
                     setMetered(false)

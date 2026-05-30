@@ -31,9 +31,13 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 
 mkdir -p "$HERE/app/libs"   # not tracked in git (empty dir); gomobile -o needs it
 TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_low_memory"
-echo "==> gomobile bind (tags: $TAGS)"
+# Target ABIs are overridable for fast local iteration: an x86_64 emulator only
+# needs android/amd64, which builds ~3x faster than the full 3-ABI release set.
+# CI leaves LIBBOX_TARGETS unset → ships all three (arm64-v8a, armeabi-v7a, x86_64).
+TARGETS="${LIBBOX_TARGETS:-android/arm64,android/arm,android/amd64}"
+echo "==> gomobile bind (tags: $TAGS) targets: $TARGETS"
 gomobile bind -v \
-  -target android/arm64,android/arm,android/amd64 \
+  -target "$TARGETS" \
   -androidapi 24 \
   -javapkg=io.nekohasekai \
   -libname=box \

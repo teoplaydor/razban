@@ -192,7 +192,26 @@ object ConfigStore {
         // vanished → "default domain resolver not found").
         adaptDns(root)
 
+        // Exact `domain` rules leak subdomains (e.g. cdn.discordapp.com wouldn't
+        // match a "domain":["discordapp.com"] entry). Desktop ConfigBuilder emits
+        // domain_suffix everywhere (inv #24); normalize here so a bundled/imported
+        // config matches the host AND its subtree the same way.
+        normalizeExactDomains(root)
+
         return root.toString(2)
+    }
+
+    private fun normalizeExactDomains(root: JSONObject) {
+        val route = root.optJSONObject("route") ?: return
+        val rules = route.optJSONArray("rules") ?: return
+        for (i in 0 until rules.length()) {
+            val r = rules.optJSONObject(i) ?: continue
+            val dom = r.optJSONArray("domain") ?: continue
+            val suffix = r.optJSONArray("domain_suffix") ?: JSONArray()
+            for (j in 0 until dom.length()) suffix.put(dom.optString(j))
+            r.put("domain_suffix", suffix)
+            r.remove("domain")
+        }
     }
 
     private fun stripRuleSets(root: JSONObject) {

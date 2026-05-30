@@ -74,14 +74,12 @@ class WebUiBridge(
         "vpn.state" -> stateString()
         "vpn.connect" -> { onConnect(); true }
         "vpn.disconnect" -> { onDisconnect(); true }
-        "vpn.stats" -> JSONObject()
-            .put("connected", RazbanVpnService.lastStatus == RazbanVpnService.Status.Started)
-            .put("uploadBytes", 0).put("downloadBytes", 0)
-            .put("uploadSpeed", 0).put("downloadSpeed", 0)
+        "vpn.stats" -> com.razban.app.bg.CoreStatus.statsJson(
+            RazbanVpnService.lastStatus == RazbanVpnService.Status.Started)
         "vpn.pendingRouteChanges" -> JSONObject().put("pending", 0).put("total", 0)
         "vpn.applyPendingRouteChanges" -> true
         "vpn.dropConnections" -> JSONObject().put("dropped", 0)
-        "traffic.throughput" -> JSONObject().put("hosts", JSONArray()).put("processes", JSONArray())
+        "traffic.throughput" -> com.razban.app.bg.CoreStatus.throughputJson()
 
         "settings.get" -> settingsJson()
         "settings.set" -> { saveSettings(params); true }
@@ -126,8 +124,8 @@ class WebUiBridge(
             }
         }
 
-        // Data-heavy desktop tabs — benign empties for now (filled per iteration).
-        "apps.connections" -> JSONArray()
+        // Live per-connection data from the core's command stream (Apps tab).
+        "apps.connections" -> com.razban.app.bg.CoreStatus.connectionsJson()
         "processes.all", "processes.running", "processes.installed" -> JSONArray()
         "domains.observed" -> JSONObject().put("direct", JSONArray()).put("dpi", JSONArray()).put("vpn", JSONArray())
         "visited.list" -> JSONArray()
