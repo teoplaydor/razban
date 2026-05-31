@@ -107,6 +107,23 @@ class WebUiBridge(
         "config.import" -> { importConfig(params); true }
         "config.hasConfig" -> ConfigStore.hasConfig(ctx)
 
+        // Server-by-code: pull + decrypt a server config from the distribution
+        // host by a short code (e.g. "hub"). On success the config is imported;
+        // if the tunnel is up we hot-reload it onto the new server.
+        "code.redeem" -> {
+            val code = when (params) {
+                is JSONObject -> params.optString("code", "")
+                is String -> params
+                else -> ""
+            }
+            val n = com.razban.app.bg.CoreCode.redeem(ctx, code)
+            if (RazbanVpnService.lastStatus == RazbanVpnService.Status.Started)
+                ctx.startService(android.content.Intent(ctx, RazbanVpnService::class.java)
+                    .setAction(RazbanVpnService.ACTION_RELOAD))
+            pushEvent("servers.changed", true)
+            JSONObject().put("ok", true).put("outbounds", n)
+        }
+
         // The Servers page "Из буфера" button calls servers.addMany({text}).
         // On Android the pasted text is a full sing-box config JSON (an exported
         // bundle), not a list of URIs — import it as the active config.
