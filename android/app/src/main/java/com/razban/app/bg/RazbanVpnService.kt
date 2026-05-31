@@ -63,6 +63,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> { stopTunnel(); return START_NOT_STICKY }
+            ACTION_RELOAD -> { if (status == Status.Started) reload(); return START_STICKY }
         }
         if (status == Status.Stopped) startTunnel()
         return START_STICKY
@@ -296,6 +297,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     companion object {
         const val TAG = "razban-core"
         const val ACTION_STOP = "com.razban.app.STOP"
+        const val ACTION_RELOAD = "com.razban.app.RELOAD"
         const val ACTION_STATUS = "com.razban.app.STATUS"
         const val EXTRA_STATUS = "status"
 
