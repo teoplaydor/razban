@@ -143,7 +143,7 @@ class WebUiBridge(
 
         // Live per-connection data from the core's command stream (Apps tab).
         "apps.connections" -> com.razban.app.bg.CoreStatus.connectionsJson()
-        "processes.all", "processes.running", "processes.installed" -> JSONArray()
+        "processes.all", "processes.running", "processes.installed" -> installedAppsJson()
         "domains.observed" -> JSONObject().put("direct", JSONArray()).put("dpi", JSONArray()).put("vpn", JSONArray())
         "visited.list" -> JSONArray()
         "discovery.sources" -> JSONArray()
@@ -173,7 +173,7 @@ class WebUiBridge(
     // absent (UI uses ?? fallbacks), but the section objects may not.
     private fun settingsJson(): JSONObject {
         val p = ctx.getSharedPreferences("razban", Context.MODE_PRIVATE)
-        return JSONObject()
+        val base = JSONObject()
             .put("theme", "dark")
             .put("language", "ru")
             .put("routingMode", p.getString("routingMode", "Smart"))
@@ -213,12 +213,32 @@ class WebUiBridge(
             .put("upstreamProxy", JSONObject().put("enabled", false).put("type", "http")
                 .put("host", "").put("port", 0))
             .put("customRules", JSONArray())
+        // Echo back the saved per-app/per-domain buckets so the Apps/Sites tabs
+        // render the user's current pins and round-trip them on the next save.
+        val ur = try { JSONObject(p.getString("userRoutes", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        for (k in listOf("bypassApps", "proxyApps", "dpiApps",
+                         "bypassDomains", "proxyDomains", "dpiDomains", "httpProxyDomains"))
+            base.put(k, ur.optJSONArray(k) ?: JSONArray())
+        return base
     }
 
     private fun saveSettings(params: Any?) {
         val o = params as? JSONObject ?: return
+        // Persist the user's per-app / per-domain route buckets (settings.set sends
+        // the full AppSettings) so ConfigStore.injectUserRoutes can layer them into
+        // the live config. Then hot-reload if the tunnel is up so the change applies
+        // immediately — the Android analog of the desktop's clash_api PUT /configs.
+        val ur = JSONObject()
+        for (k in listOf("bypassApps", "proxyApps", "dpiApps",
+                         "bypassDomains", "proxyDomains", "dpiDomains", "httpProxyDomains"))
+            ur.put(k, o.optJSONArray(k) ?: JSONArray())
         ctx.getSharedPreferences("razban", Context.MODE_PRIVATE).edit()
-            .putString("routingMode", o.optString("routingMode", "Smart")).apply()
+            .putString("routingMode", o.optString("routingMode", "Smart"))
+            .putString("userRoutes", ur.toString())
+            .apply()
+        if (RazbanVpnService.lastStatus == RazbanVpnService.Status.Started)
+            ctx.startService(android.content.Intent(ctx, RazbanVpnService::class.java)
+                .setAction(RazbanVpnService.ACTION_RELOAD))
     }
 
     private fun serversJson(): JSONObject {
@@ -254,14 +274,58 @@ class WebUiBridge(
         return arr
     }
 
-    /** {endpoints:[{tag, ok, latencyMs}]} — the bundle card's "N доступно".
-     *  Connected ⇒ all protocols reachable (urltest is live among them). */
+    // ── per-endpoint TCP reachability cache (real ping; works even w/o VPN) ──
+    private val healthCache = java.util.concurrent.ConcurrentHashMap<String, Triple<Boolean, Int, Long>>()
+    private val pingInFlight = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /** Fire-and-forget TCP connect to host:port on a worker thread; stores
+     *  (ok, latencyMs, timestamp) in healthCache. Dedups by tag so a polling UI
+     *  doesn't spawn a new socket every call. */
+    private fun kickPing(tag: String, host: String, port: Int) {
+        if (!pingInFlight.add(tag)) return
+        Thread {
+            val t0 = System.currentTimeMillis()
+            var ok = false; var lat = 0
+            try {
+                java.net.Socket().use { s ->
+                    s.connect(java.net.InetSocketAddress(host, port), 2500)
+                    ok = true; lat = (System.currentTimeMillis() - t0).toInt().coerceAtLeast(1)
+                }
+            } catch (_: Exception) { ok = false }
+            healthCache[tag] = Triple(ok, lat, System.currentTimeMillis())
+            pingInFlight.remove(tag)
+        }.start()
+    }
+
+    /** {endpoints:[{tag, ok, latencyMs, pinging}]} — the bundle card's badges.
+     *  Real per-protocol TCP reachability: pings each endpoint directly (no VPN
+     *  required) so a freshly-added (by-code) server shows live latency instead
+     *  of "no connection". Async + 10s cache — the first call kicks the pings
+     *  and reports `pinging:true`, so the UI shows a spinner until results land
+     *  (~1-2s); subsequent polls return the cached latency. When the tunnel is
+     *  up, `ok` is forced true (urltest keeps a live protocol among them). */
     private fun bundleHealth(): JSONObject {
+        val protos = ConfigStore.protocolOutbounds(ctx)
         val connected = RazbanVpnService.lastStatus == RazbanVpnService.Status.Started
+        val now = System.currentTimeMillis()
         val endpoints = JSONArray()
-        for ((tag, _, _) in ConfigStore.protocolOutbounds(ctx)) {
-            endpoints.put(JSONObject().put("tag", tag).put("ok", connected)
-                .put("latencyMs", if (connected) 1 else 0))
+        for ((tag, type, addr) in protos) {
+            // UDP/QUIC protocols (hysteria2/tuic) never answer a TCP connect, so
+            // a TCP probe would always show a misleading "× нет". Report udp-ok
+            // without probing (latency -1 → the UI renders "udp✓").
+            if (type == "hysteria2" || type == "hysteria" || type == "tuic") {
+                endpoints.put(JSONObject().put("tag", tag).put("ok", true)
+                    .put("latencyMs", -1).put("pinging", false))
+                continue
+            }
+            val cached = healthCache[tag]
+            val fresh = cached != null && (now - cached.third) < 10_000
+            if (!fresh) kickPing(tag, addr.first, addr.second)
+            val lat = cached?.second ?: 0
+            endpoints.put(JSONObject().put("tag", tag)
+                .put("ok", (cached?.first ?: false) || connected)
+                .put("latencyMs", if (lat > 0) lat else if (connected) 1 else 0)
+                .put("pinging", cached == null))
         }
         return JSONObject().put("endpoints", endpoints)
     }
@@ -273,6 +337,35 @@ class WebUiBridge(
             else -> params?.toString() ?: return
         }
         if (cfg.trimStart().startsWith("{")) ConfigStore.importConfig(ctx, cfg)
+    }
+
+    /** Launchable (user-facing) installed apps for the Apps tab, so the user can
+     *  pin an app to direct/VPN. `process` carries the package name — that's what
+     *  ConfigStore.injectUserRoutes emits as a `package_name` route rule. Skips
+     *  self; dedups multi-activity packages. (Icons omitted — name+package is
+     *  enough to pick; base64-ing every icon would bloat the payload.) */
+    private fun installedAppsJson(): JSONArray {
+        val pm = ctx.packageManager
+        val arr = JSONArray()
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_MAIN, null)
+                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+            val seen = HashSet<String>()
+            for (ri in pm.queryIntentActivities(intent, 0)) {
+                val pkg = ri.activityInfo?.packageName ?: continue
+                if (pkg == ctx.packageName || !seen.add(pkg)) continue
+                val label = try { ri.loadLabel(pm)?.toString() } catch (_: Exception) { null } ?: pkg
+                // Field names MUST match the React AppEntry shape (executableName is
+                // what the Apps tab reads + writes into the *Apps buckets, which
+                // ConfigStore.injectUserRoutes emits as package_name rules).
+                arr.put(JSONObject()
+                    .put("name", label)
+                    .put("executableName", pkg)
+                    .put("isRunning", false)
+                    .put("pid", 0))
+            }
+        } catch (_: Exception) {}
+        return arr
     }
 
     private fun readClipboard(): String {

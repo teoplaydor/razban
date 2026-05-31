@@ -14,6 +14,16 @@
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="34" />
 
+    <!-- Package visibility (API 30+): see launchable apps so the Apps tab can
+         list them for per-app routing. LAUNCHER-only — avoids the heavier
+         QUERY_ALL_PACKAGES (Play-policy sensitive). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".RazbanApp"
         android:allowBackup="false"

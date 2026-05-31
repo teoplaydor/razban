@@ -71,10 +71,17 @@ object ConfigStore {
 
     fun currentConfigJson(context: Context): String? {
         val f = File(context.filesDir, FILE)
-        if (f.exists()) return f.readText()
-        // Fall back to the bundled default (adapted), persisting it for next time.
-        val raw = readBundledDefault(context) ?: return null
-        return try { val a = adaptForAndroid(raw); f.writeText(a); a } catch (_: Exception) { null }
+        val base = if (f.exists()) f.readText()
+        else {
+            // Fall back to the bundled default (adapted), persisting it for next time.
+            val raw = readBundledDefault(context) ?: return null
+            try { val a = adaptForAndroid(raw); f.writeText(a); a } catch (_: Exception) { return null }
+        }
+        // Overlay the user's per-app / per-domain route picks on EVERY load, so a
+        // settings change (→ ACTION_RELOAD → reload() → currentConfigJson) takes
+        // effect without re-importing the base config. The base file on disk stays
+        // free of user rules — they're layered in here from SharedPreferences.
+        return injectUserRoutes(base, context)
     }
 
     /** Import a sing-box config (pasted text / file / URL body). Adapts and
@@ -248,6 +255,62 @@ object ConfigStore {
             if (o.optString("tag") == "proxy") return "proxy"
         }
         return "proxy"
+    }
+
+    /** Overlay the user's per-app (package_name) and per-domain (domain_suffix)
+     *  route picks (saved in SharedPreferences by settings.set) onto the base
+     *  config's route.rules. Priority, highest first, spliced ABOVE the baked
+     *  ruleset but BELOW any leading action rules (sniff/hijack-dns):
+     *    app pins beat domain rules (matches desktop inv. #1);
+     *    bypass→direct, proxy & dpi→the tunnel (no byedpi on Android → dpi folds
+     *    to VPN, same as stripDpiBypass does for the baked config).
+     *  Idempotent + cheap: returns the input unchanged when nothing is pinned. */
+    fun injectUserRoutes(json: String, context: Context): String {
+        val ur = try {
+            JSONObject(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString("userRoutes", "{}") ?: "{}")
+        } catch (_: Exception) { return json }
+        val keys = listOf("bypassApps", "proxyApps", "dpiApps",
+                          "bypassDomains", "proxyDomains", "dpiDomains")
+        if (keys.all { (ur.optJSONArray(it)?.length() ?: 0) == 0 }) return json
+        return try {
+            val root = JSONObject(json)
+            val route = root.optJSONObject("route") ?: return json
+            val existing = route.optJSONArray("rules") ?: JSONArray()
+            val tunnel = primaryProxyTag(root)
+            val userRules = JSONArray()
+            // apps first — an app pin must beat any global domain rule
+            routeRule("package_name", ur.optJSONArray("bypassApps"), "direct")?.let { userRules.put(it) }
+            routeRule("package_name", ur.optJSONArray("proxyApps"), tunnel)?.let { userRules.put(it) }
+            routeRule("package_name", ur.optJSONArray("dpiApps"), tunnel)?.let { userRules.put(it) }
+            // domains next
+            routeRule("domain_suffix", ur.optJSONArray("bypassDomains"), "direct")?.let { userRules.put(it) }
+            routeRule("domain_suffix", ur.optJSONArray("proxyDomains"), tunnel)?.let { userRules.put(it) }
+            routeRule("domain_suffix", ur.optJSONArray("dpiDomains"), tunnel)?.let { userRules.put(it) }
+            // splice: leading action rules (sniff/hijack-dns) stay on top, then the
+            // user rules, then everything else (the baked ColdBoot/itdoginfo rules).
+            val merged = JSONArray()
+            var injected = false
+            for (i in 0 until existing.length()) {
+                val r = existing.optJSONObject(i)
+                val isAction = r != null && (r.has("action") || r.optString("protocol").isNotEmpty())
+                if (!injected && !isAction) {
+                    for (j in 0 until userRules.length()) merged.put(userRules.get(j))
+                    injected = true
+                }
+                merged.put(existing.get(i))
+            }
+            if (!injected) for (j in 0 until userRules.length()) merged.put(userRules.get(j))
+            route.put("rules", merged)
+            android.util.Log.d("razban-config",
+                "injectUserRoutes: layered ${userRules.length()} user route rule(s) (tunnel=$tunnel)")
+            root.toString(2)
+        } catch (_: Exception) { json }
+    }
+
+    private fun routeRule(field: String, arr: JSONArray?, outbound: String): JSONObject? {
+        if (arr == null || arr.length() == 0) return null
+        return JSONObject().put(field, arr).put("outbound", outbound)
     }
 
     private fun stripDpiBypass(root: JSONObject, tunnelTag: String) {
