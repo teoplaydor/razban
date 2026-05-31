@@ -165,21 +165,54 @@ class WebUiBridge(
         ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "0.1.0"
     } catch (_: Exception) { "0.1.0" }
 
+    // Must mirror the FULL AppSettings shape the React Settings page expects.
+    // Every nested section the UI dereferences (proxy/dns/tun/clashApi/logs/
+    // experimental/killSwitch/discovery/speed/dpi/upstreamProxy) MUST be present
+    // — a missing object makes `local.<section>.<field>` throw a TypeError that
+    // unmounts the whole React tree (blank screen). Individual fields may be
+    // absent (UI uses ?? fallbacks), but the section objects may not.
     private fun settingsJson(): JSONObject {
         val p = ctx.getSharedPreferences("razban", Context.MODE_PRIVATE)
         return JSONObject()
             .put("theme", "dark")
             .put("language", "ru")
             .put("routingMode", p.getString("routingMode", "Smart"))
+            .put("defaultRoute", "proxy")
             .put("startWithWindows", false)
+            .put("startMinimized", false)
+            .put("minimizeToTray", false)
             .put("autoConnectOnStartup", false)
-            .put("proxy", JSONObject().put("enabled", true).put("mixedPort", 2080).put("listenAddress", "127.0.0.1"))
-            .put("dns", JSONObject().put("primaryDns", "tls://1.1.1.1").put("domesticDns", "77.88.8.8"))
-            .put("tun", JSONObject().put("enabled", true).put("interfaceName", "Razban").put("mtu", 1420))
-            .put("clashApi", JSONObject().put("enabled", true).put("port", 9090))
-            .put("logs", JSONObject().put("level", "info"))
-            .put("killSwitch", JSONObject().put("enabled", false))
-            .put("experimental", JSONObject().put("testUrl", "https://www.gstatic.com/generate_204").put("testInterval", 300))
+            .put("checkForUpdates", true)
+            .put("proxy", JSONObject().put("enabled", true).put("mixedPort", 2080)
+                .put("socksPort", 0).put("httpPort", 0).put("listenAddress", "127.0.0.1")
+                .put("setSystemProxy", false).put("allowLan", false))
+            .put("dns", JSONObject().put("primaryDns", "tls://1.1.1.1").put("secondaryDns", "tls://8.8.8.8")
+                .put("domesticDns", "77.88.8.8").put("strategy", "prefer_ipv4")
+                .put("enableDoH", true).put("blockAds", false))
+            .put("tun", JSONObject().put("enabled", true).put("interfaceName", "Razban").put("mtu", 1420)
+                .put("stack", "gvisor").put("autoRoute", true).put("strictRoute", false))
+            .put("clashApi", JSONObject().put("enabled", true).put("port", 9090)
+                .put("secret", "").put("externalUi", false))
+            .put("logs", JSONObject().put("level", "info").put("persist", false).put("maxFiles", 7))
+            .put("experimental", JSONObject().put("enableSniffing", true).put("enableHttp3", false)
+                .put("useGvisorStack", true).put("testUrl", "https://www.gstatic.com/generate_204")
+                .put("testInterval", 300))
+            .put("killSwitch", JSONObject().put("enabled", false)
+                .put("blockOnDisconnect", false).put("blockOnLeak", false))
+            .put("discovery", JSONObject().put("enabled", true).put("runAtStartup", false)
+                .put("refreshInterval", "6h").put("maxServersPerSource", 50)
+                .put("disabledSourceIds", JSONArray()).put("autoPruneDead", true)
+                .put("pruneAfterFailures", 3).put("healthCheckInterval", "5m")
+                .put("pingIntervalSeconds", 30))
+            .put("speed", JSONObject().put("enableTcpFastOpen", false).put("enableMultiplex", false)
+                .put("multiplexProtocol", "smux").put("multiplexMaxConnections", 4)
+                .put("multiplexMinStreams", 4).put("enableBrutal", false).put("brutalUpMbps", 0)
+                .put("brutalDownMbps", 0).put("enableUdpOverTcp", false).put("enableTcpNoDelay", true)
+                .put("enableDnsCache", true).put("dnsCacheSize", 0))
+            .put("dpi", JSONObject().put("enabled", false).put("algorithm", "auto").put("localPort", 1080))
+            .put("upstreamProxy", JSONObject().put("enabled", false).put("type", "http")
+                .put("host", "").put("port", 0))
+            .put("customRules", JSONArray())
     }
 
     private fun saveSettings(params: Any?) {
