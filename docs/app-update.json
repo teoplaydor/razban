@@ -1,0 +1,9 @@
+{
+  "versionCode": 15,
+  "versionName": "0.1.14",
+  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-0.1.14/Razban-0.1.14.apk",
+  "size": 124658745,
+  "sha256": "3872658fd0b145f791c0bb7062ce0984310518c84d9903c6b0b248118d208fb8",
+  "mandatory": false,
+  "notes": "Плавный интерфейс без лагов, убраны Windows-настройки, рабочее автообновление, раздел «Маршрутизация»."
+}

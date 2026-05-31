@@ -11,15 +11,20 @@ android {
         applicationId = "com.razban.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 14
-        versionName = "0.1.13"
+        versionCode = 15
+        versionName = "0.1.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // App-only update channel (secret header gated in Caddy). The key is
         // injected from the UPDATE_KEY CI secret at build time — never in git.
         buildConfigField("String", "UPDATE_KEY", "\"${System.getenv("UPDATE_KEY") ?: ""}\"")
-        buildConfigField("String", "UPDATE_URL", "\"https://razban.huyb.ru/app-update/update.json\"")
+        // PUBLIC update channel (GitHub Pages, no secret) → points at the
+        // secret-free android-public APK. The private Beget channel handed
+        // secret-embedding APKs to public users, and its manifest had gone stale
+        // (0.1.10 < shipped 0.1.13 → every client saw "up to date"). The
+        // X-Razban-Update-Key header is still sent but GitHub Pages ignores it.
+        buildConfigField("String", "UPDATE_URL", "\"https://teoplaydor.github.io/razban/app-update.json\"")
 
         // Only ship the ABIs sing-box's libbox + byedpi are built for.
         ndk {
