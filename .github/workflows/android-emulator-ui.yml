@@ -11,9 +11,15 @@ name: android-emulator-ui
 on:
   push:
     branches: [ "ci/**" ]
-    paths-ignore:
-      - 'android/ci/desktop-shot.js'
-      - '.github/workflows/desktop-ui-preview.yml'
+    # Allowlist: only the things that affect the UI matrix (so site-access /
+    # verify-release / desktop-preview-only pushes don't spin up 3 emulators).
+    paths:
+      - 'android/app/src/main/assets/webui/**'
+      - 'android/app/src/main/java/**'
+      - 'android/app/build.gradle.kts'
+      - 'android/ci/ui-tour.sh'
+      - 'android/ci/cdp-*.py'
+      - '.github/workflows/android-emulator-ui.yml'
   workflow_dispatch:
 
 permissions:

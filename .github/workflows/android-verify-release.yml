@@ -1,0 +1,60 @@
+name: android-verify-release
+
+# Smoke-tests the SHIPPED public release APK (the signed, R8-minified artifact —
+# not a debug build) in an emulator: install → redeem the "hub" code → connect →
+# real site opens, and scans logcat for proguard/JNI crashes. This is the
+# "новая версия → запуск → проверка" gate that catches release-only breakage.
+# No libbox build — installs the prebuilt APK from the release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to verify'
+        required: true
+        default: 'android-public-v0.1.16'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download release APK
+        run: |
+          mkdir -p release-apk
+          gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" -p '*.apk' -D release-apk
+          ls -la release-apk/
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install platform-tools
+        run: yes | sdkmanager "platform-tools" "platforms;android-34" >/dev/null
+      - name: Install CDP deps
+        run: python3 -m pip install --quiet "websockets>=11,<13"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Verify release APK in emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          working-directory: android
+          script: bash ci/verify-release.sh
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-release
+          path: |
+            android/relshots/
+            android/rel-logcat.txt
