@@ -1,9 +1,9 @@
 {
-  "versionCode": 17,
-  "versionName": "0.1.16",
-  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.16/Razban-0.1.16.apk",
-  "size": 124665601,
-  "sha256": "c03372fe733c8c9f41747ac435b29db1ae12051fec56d9719f112654338c495a",
+  "versionCode": 18,
+  "versionName": "0.1.17",
+  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.17/Razban-0.1.17.apk",
+  "size": 124665613,
+  "sha256": "1432ce2ad19b1107b2b388c3d6edb81b97e126bd99e15ef1d46a47b4b8287ac4",
   "mandatory": false,
-  "notes": "Работает на старых Android (раньше был белый экран на Android ≤10), исправлен экран «Настройки». Проверено на эмуляторах: подключение, маршрутизация, открытие сайтов."
+  "notes": "Работает на старых Android (раньше был белый экран на Android ≤10). Авто-маршрутизация: российские сервисы идут напрямую (быстрее), заблокированное — через VPN. Исправлен экран «Настройки» и «Статистика»."
 }
