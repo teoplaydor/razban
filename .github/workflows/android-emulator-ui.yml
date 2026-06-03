@@ -19,6 +19,13 @@ permissions:
 jobs:
   ui:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Span the real device floor → ceiling. API 24 (Android 7) ships the
+        # oldest System WebView (~Chrome 51) — the harshest compat test (this is
+        # where crypto.randomUUID-class API gaps and es2020 parse failures bite).
+        api-level: [24, 29, 34]
     env:
       SING_BOX_TAG: v1.13.12
       PKG: com.razban.app.debug
@@ -61,7 +68,7 @@ jobs:
         env:
           UPDATE_KEY: ${{ secrets.UPDATE_KEY }}
         with:
-          api-level: 30
+          api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
           force-avd-creation: true
@@ -70,7 +77,9 @@ jobs:
           working-directory: android
           # The action runs each `script:` line in its own `sh -c`, so all the
           # real logic lives in one bash file where state persists. See ui-tour.sh.
-          script: bash ci/ui-tour.sh
+          # tee the whole tour (CDP diag, connect status, per-screen innerText)
+          # to an uploaded report so results don't depend on log-grep.
+          script: bash ci/ui-tour.sh 2>&1 | tee "$GITHUB_WORKSPACE/android/ui-report.txt"
       - name: Montage screenshots
         if: always()
         run: |
@@ -93,11 +102,15 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ui-screenshots
+          name: ui-screenshots-api${{ matrix.api-level }}
           path: |
             android/shots/
             android/ui-montage.png
-      - name: Upload logcat
+      - name: Upload logcat + report
         if: always()
         uses: actions/upload-artifact@v4
-        with: { name: ui-logcat, path: android/ui-logcat.txt }
+        with:
+          name: ui-logcat-api${{ matrix.api-level }}
+          path: |
+            android/ui-logcat.txt
+            android/ui-report.txt
