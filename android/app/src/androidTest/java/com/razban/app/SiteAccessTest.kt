@@ -59,6 +59,16 @@ class SiteAccessTest {
             android.util.Log.i("razban-core", "site-access [$kind] $url -> $code")
             Triple(url, kind, code)
         }
+        // ── GeoClassifier: sustain traffic to a RU-hosted domain so the runtime
+        //    classifier observes its RU IP and pins it DIRECT. Datacenter-safe to
+        //    verify: ya.ru resolves to RU IPs everywhere, so GeoIP returns RU. ──
+        android.util.Log.i("razban-core", "geo-phase: sustaining ya.ru for the GeoClassifier")
+        repeat(8) { httpGet("https://ya.ru/"); Thread.sleep(2500) }
+        val ur = ctx.getSharedPreferences("razban", Context.MODE_PRIVATE)
+            .getString("userRoutes", "{}") ?: "{}"
+        android.util.Log.i("razban-core", "geo-result: userRoutes=$ur")
+        android.util.Log.i("razban-core", "geo-pinned-ya.ru=${ur.contains("ya.ru")}")
+
         stop()
 
         val opened = results.count { it.third in 200..399 }

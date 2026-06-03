@@ -114,6 +114,9 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 CoreStatus.onTick = {
                     try { Notifications.update(this@RazbanVpnService, CoreStatus.notifLine()) } catch (_: Exception) {}
                 }
+                // Runtime domain classifier: GeoIP-pins observed RU services to
+                // direct (safe — see GeoClassifier). Applies via reload (hot).
+                GeoClassifier.start(applicationContext) { reload() }
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "startTunnel FAILED", t)
                 writeDebugMessage("start failed: ${t.message}")
@@ -140,6 +143,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         status = Status.Stopping
         scope.launch {
             CoreStatus.onTick = null
+            GeoClassifier.stop()
             CoreStatus.stop()
             try { commandServer?.closeService() } catch (_: Throwable) {}
             try { commandServer?.close() } catch (_: Throwable) {}

@@ -43,6 +43,7 @@ object CoreStatus : CommandClientHandler {
     private class Conn(
         var host: String, var process: String, var network: String,
         var outbound: String, var up: Long, var down: Long,
+        var ip: String = "",
     )
     private val conns = ConcurrentHashMap<String, Conn>()
 
@@ -118,6 +119,19 @@ object CoreStatus : CommandClientHandler {
         return JSONObject().put("hosts", hosts).put("processes", procs)
     }
 
+    /** (domain, destIp) for live connections that carry a real domain (not a bare
+     *  IP). Feeds [GeoClassifier] — which GeoIP-checks the IP to pin RU services
+     *  direct. */
+    fun observedDomains(): List<Pair<String, String>> {
+        val out = ArrayList<Pair<String, String>>()
+        for (c in conns.values) {
+            val h = c.host
+            if (h.isEmpty() || c.ip.isEmpty() || h == c.ip) continue
+            out.add(h to c.ip)
+        }
+        return out
+    }
+
     /** [{process,host,network,outbound,uploadBytes,downloadBytes}] — for the Apps tab. */
     fun connectionsJson(): JSONArray {
         val arr = JSONArray()
@@ -183,6 +197,7 @@ object CoreStatus : CommandClientHandler {
                         outbound = c.outbound ?: "",
                         up = c.uplinkTotal,
                         down = c.downlinkTotal,
+                        ip = hostOf(c.destination),
                     )
                 } else {
                     // delta-only update (Connection omitted) — bump the existing row

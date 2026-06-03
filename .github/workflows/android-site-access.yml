@@ -81,6 +81,8 @@ jobs:
           grep -aE "site-access" "$F" 2>/dev/null | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | head -40 || echo none
           echo "===== razban-core (connect) ====="
           grep -aE "startTunnel|openTun|service started OK" "$F" 2>/dev/null | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | head -20 || echo none
+          echo "===== GeoClassifier (runtime RU→direct) ====="
+          grep -aE "razban-geo|geo-phase|geo-result|geo-pinned" "$F" 2>/dev/null | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | head -30 || echo none
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
