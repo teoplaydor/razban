@@ -66,16 +66,13 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           working-directory: android
+          # NOTE: the action runs each script LINE in its own `sh -c`, so NO `\`
+          # line-continuations (they'd be passed to gradle as a literal task `\`).
+          # Keep the gradle invocation on ONE line.
           script: |
             adb logcat -c || true
             adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/site-logcat.txt" 2>&1 &
-            set +e
-            gradle connectedDebugAndroidTest --no-daemon --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.SiteAccessTest
-            rc=$?
-            sleep 2
-            echo "rc=$rc"
-            exit $rc
+            gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.SiteAccessTest --no-daemon --stacktrace
       - name: Show site-access results
         if: always()
         run: |
