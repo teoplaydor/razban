@@ -1,0 +1,17 @@
+# Razban — route exceptions: FORCE DIRECT (remotely-updatable).
+# RU services that MUST egress on the real RU IP — a foreign VPN exit hits their
+# reverse geo-fence (gov/banking refuse non-RU IPs) or just wastes latency. Pin a
+# site here when the probe/ruleset wrongly tunnels it. NOTE: the hardcoded ColdBoot
+# "direct" anchors already win over everything (tier 1); this is the LIVE layer for
+# anything NOT already anchored, editable without a rebuild. One FQDN per line.
+
+gosuslugi.ru
+sberbank.ru
+nalog.ru
+mos.ru
+vk.com
+ok.ru
+yandex.ru
+mail.ru
+wildberries.ru
+ozon.ru
