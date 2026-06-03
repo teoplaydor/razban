@@ -1,0 +1,96 @@
+name: windows-vpn-leak
+
+# Live desktop-class test on a Windows runner (the probe proved TUN works here):
+# bring up sing-box TUN with the REAL bundle, confirm the egress IP becomes the
+# VPN exit (Helsinki), then ABRUPTLY kill sing-box and re-check the egress IP. If
+# it reverts to the runner's real IP, the real IP LEAKS on an abrupt drop — i.e.
+# the (stubbed) kill-switch does not protect. Builds the TUN config from the
+# bundle secret in PowerShell (no desktop source needed).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  leak:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Baseline egress IP (no VPN)
+        id: base
+        shell: pwsh
+        run: |
+          $ip = Invoke-RestMethod "https://ipinfo.io/json" -TimeoutSec 15
+          Write-Host "BASELINE ip=$($ip.ip) country=$($ip.country) org=$($ip.org)"
+          "ip=$($ip.ip)" >> $env:GITHUB_OUTPUT
+      - name: Download sing-box + wintun
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force sb | Out-Null
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v1.13.12/sing-box-1.13.12-windows-amd64.zip" -OutFile sb.zip
+          Expand-Archive sb.zip -DestinationPath sb -Force
+          Copy-Item (Get-ChildItem -Recurse sb -Filter sing-box.exe | Select-Object -First 1).FullName sb\sing-box.exe -Force
+          Invoke-WebRequest "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile wt.zip
+          Expand-Archive wt.zip -DestinationPath wt -Force
+          Copy-Item "wt\wintun\bin\amd64\wintun.dll" sb\wintun.dll -Force
+      - name: Build Windows TUN config from the bundle secret
+        shell: pwsh
+        env:
+          CFG_B64: ${{ secrets.DEFAULT_CONFIG_GZ_B64 }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:CFG_B64) { Write-Error "no DEFAULT_CONFIG_GZ_B64 secret"; exit 1 }
+          # decode + gunzip the bundle config
+          [IO.File]::WriteAllBytes("$PWD\cfg.gz", [Convert]::FromBase64String($env:CFG_B64))
+          $in = [IO.File]::OpenRead("$PWD\cfg.gz")
+          $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+          $sr = New-Object IO.StreamReader($gz)
+          $json = $sr.ReadToEnd(); $sr.Close()
+          $cfg = $json | ConvertFrom-Json
+          $sel = ($cfg.outbounds | Where-Object { $_.type -eq 'selector' } | Select-Object -First 1)
+          $finalTag = if ($sel) { $sel.tag } elseif ($cfg.outbounds | Where-Object { $_.type -eq 'urltest' }) { ($cfg.outbounds | Where-Object { $_.type -eq 'urltest' } | Select-Object -First 1).tag } else { 'proxy' }
+          Write-Host "bundle outbounds: $(( $cfg.outbounds | ForEach-Object { $_.type }) -join ', ')"
+          Write-Host "final outbound tag: $finalTag"
+          $win = [ordered]@{
+            log = @{ level = 'info' }
+            dns = @{ servers = @(@{ address = '1.1.1.1'; detour = 'direct' }) }
+            inbounds = @(@{ type='tun'; tag='tun-in'; address=@('172.19.0.1/30'); auto_route=$true; strict_route=$false; stack='system'; mtu=1420 })
+            outbounds = $cfg.outbounds
+            route = @{ auto_detect_interface=$true; final=$finalTag; rules=@(@{action='sniff'}, @{protocol='dns'; action='hijack-dns'}) }
+          }
+          $win | ConvertTo-Json -Depth 40 | Set-Content -Encoding utf8 sb\config.json
+          & sb\sing-box.exe check -c sb\config.json
+          Write-Host "config check OK"
+      - name: Connect, verify VPN exit, abrupt-kill, check leak
+        shell: pwsh
+        run: |
+          $base = "${{ steps.base.outputs.ip }}"
+          $p = Start-Process "sb\sing-box.exe" -ArgumentList "run","-c","sb\config.json" -PassThru -WindowStyle Hidden -RedirectStandardOutput sb\out.log -RedirectStandardError sb\err.log
+          Write-Host "sing-box pid=$($p.Id), waiting for the tunnel + urltest..."
+          Start-Sleep -Seconds 16
+          $conn = $null
+          foreach ($try in 1..5) {
+            try { $conn = Invoke-RestMethod "https://ipinfo.io/json" -TimeoutSec 12; break } catch { Start-Sleep 3 }
+          }
+          if ($conn) { Write-Host "CONNECTED exit ip=$($conn.ip) country=$($conn.country) org=$($conn.org)" }
+          else { Write-Host "CONNECTED fetch FAILED (tunnel may not have come up / agent disrupted)" }
+          $vpnActive = ($conn -and $conn.ip -ne $base)
+          Write-Host "VPN_ACTIVE=$vpnActive (exit changed from baseline $base)"
+          Write-Host "=== sing-box log tail ==="
+          Get-Content sb\out.log,sb\err.log -ErrorAction SilentlyContinue | Select-Object -Last 20
+          # ABRUPT kill (simulates a crash) — no graceful shutdown.
+          Write-Host "=== ABRUPT KILL ==="
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 6
+          $after = $null
+          foreach ($try in 1..5) {
+            try { $after = Invoke-RestMethod "https://ipinfo.io/json" -TimeoutSec 12; break } catch { Start-Sleep 3 }
+          }
+          if ($after) { Write-Host "POST-KILL exit ip=$($after.ip) country=$($after.country)" }
+          $leaked = ($after -and $after.ip -eq $base)
+          Write-Host "LEAK RESULT: baseline=$base  vpnActive=$vpnActive  postKill=$($after.ip)  REAL_IP_LEAKED=$leaked"
+          # Restore route hygiene (in case auto_route left anything)
+          Get-NetRoute -ErrorAction SilentlyContinue | Where-Object InterfaceAlias -like '*tun*' | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
