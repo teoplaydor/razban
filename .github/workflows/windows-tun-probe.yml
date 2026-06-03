@@ -1,0 +1,88 @@
+name: windows-tun-probe
+
+# Feasibility probe: can a GitHub-hosted Windows runner bring up a sing-box
+# wintun TUN with auto_route WITHOUT severing its own control connection? If yes,
+# the desktop's live routing / kill-switch / IP-leak behaviour can be tested here
+# (no desktop source needed — just the sing-box binary + a hand-written config).
+# Uses a DIRECT outbound (no real VPN) so traffic stays on the real NIC: a safe
+# pass-through that only exercises TUN creation + auto_route + teardown.
+
+on:
+  push:
+    branches: [ "ci/**" ]
+    paths:
+      - '.github/workflows/windows-tun-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Baseline egress IP (no TUN)
+        shell: pwsh
+        run: |
+          $ip = (Invoke-RestMethod -Uri "https://ipinfo.io/json" -TimeoutSec 15)
+          Write-Host "baseline IP=$($ip.ip) country=$($ip.country) org=$($ip.org)"
+      - name: Download sing-box + wintun
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force sb | Out-Null
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v1.13.12/sing-box-1.13.12-windows-amd64.zip" -OutFile sb.zip
+          Expand-Archive sb.zip -DestinationPath sb -Force
+          $exe = Get-ChildItem -Recurse sb -Filter sing-box.exe | Select-Object -First 1
+          Copy-Item $exe.FullName sb\sing-box.exe -Force
+          Invoke-WebRequest "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile wt.zip
+          Expand-Archive wt.zip -DestinationPath wt -Force
+          Copy-Item "wt\wintun\bin\amd64\wintun.dll" sb\wintun.dll -Force
+          & sb\sing-box.exe version
+          Get-ChildItem sb | Select-Object Name,Length
+      - name: Write minimal direct-TUN config
+        shell: pwsh
+        run: |
+          @'
+          {
+            "log": { "level": "info" },
+            "inbounds": [ {
+              "type": "tun", "tag": "tun-in",
+              "address": [ "172.19.0.1/30" ],
+              "auto_route": true, "strict_route": false, "stack": "system", "mtu": 1420
+            } ],
+            "outbounds": [ { "type": "direct", "tag": "direct", "udp_fragment": false } ],
+            "route": {
+              "auto_detect_interface": true, "final": "direct",
+              "rules": [ { "action": "sniff" }, { "protocol": "dns", "action": "hijack-dns" } ]
+            }
+          }
+          '@ | Set-Content -Encoding utf8 sb\config.json
+          & sb\sing-box.exe check -c sb\config.json
+          Write-Host "config check OK"
+      - name: Bring up TUN, test connectivity, tear down
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "sb\sing-box.exe" -ArgumentList "run","-c","sb\config.json" -PassThru -WindowStyle Hidden -RedirectStandardOutput sb\out.log -RedirectStandardError sb\err.log
+          Write-Host "sing-box pid=$($p.Id)"
+          Start-Sleep -Seconds 8
+          Write-Host "=== adapters ==="
+          Get-NetAdapter | Where-Object { $_.InterfaceDescription -match 'WireGuard|Wintun|TUN' -or $_.Name -match 'tun|TUN' } | Format-Table Name,InterfaceDescription,Status
+          Write-Host "=== default routes ==="
+          Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Format-Table ifIndex,NextHop,RouteMetric,InterfaceAlias
+          $tunUp = [bool](Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | Where-Object { $_.InterfaceDescription -match 'Wintun' -or $_.Name -match 'tun' })
+          Write-Host "TUN_UP=$tunUp"
+          # Does the runner still have internet THROUGH the TUN?
+          $thru = $null
+          try { $thru = Invoke-RestMethod -Uri "https://ipinfo.io/json" -TimeoutSec 15 } catch { Write-Host "through-TUN fetch FAILED: $($_.Exception.Message)" }
+          if ($thru) { Write-Host "through-TUN IP=$($thru.ip) country=$($thru.country) (connectivity PRESERVED via TUN)" }
+          Write-Host "=== sing-box log tail ==="
+          Get-Content sb\out.log,sb\err.log -ErrorAction SilentlyContinue | Select-Object -Last 25
+          # Tear down
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+          $after = $null
+          try { $after = Invoke-RestMethod -Uri "https://ipinfo.io/json" -TimeoutSec 15 } catch { Write-Host "post-kill fetch FAILED: $($_.Exception.Message)" }
+          if ($after) { Write-Host "post-kill IP=$($after.ip) (internet restored after sing-box died)" }
+          Write-Host "PROBE RESULT: tunUp=$tunUp throughTun=$([bool]$thru) postKill=$([bool]$after)"
