@@ -141,6 +141,17 @@ if [ "$CDP" = "1" ]; then
 fi
 echo "::endgroup::"
 
+# ── Onboarding: redeem a server code via the bridge RPC (how a NEW user gets a
+#    server — the app's entry point). Posts code.redeem and checks the reply.
+#    Direct RPC, not a fragile modal tap. ──
+echo "::group::redeem-code"
+if [ "$CDP" = "1" ]; then
+  REDEEM=$(ceval "new Promise(function(res){var id='citest';function h(ev){try{var m=JSON.parse(ev.data);if(m.id===id){window.chrome.webview.removeEventListener('message',h);res(JSON.stringify({ok:!m.error,err:m.error||null}));}}catch(e){}}window.chrome.webview.addEventListener('message',h);window.chrome.webview.postMessage(JSON.stringify({id:id,method:'code.redeem',params:{code:'hub'}}));setTimeout(function(){res('TIMEOUT');},20000);})")
+  echo "redeem('hub'): $REDEEM"
+  if echo "$REDEEM" | grep -q '\"ok\":true'; then echo "REDEEM-OK: server code accepted"; else echo "REDEEM-NOTE: $REDEEM"; fi
+fi
+echo "::endgroup::"
+
 kill "$LP" 2>/dev/null || true
 echo "shots:"; ls -la "$SHOTS/"
 exit 0
