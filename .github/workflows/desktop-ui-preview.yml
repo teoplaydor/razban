@@ -1,0 +1,51 @@
+name: desktop-ui-preview
+
+# Screenshots the SAME React dist at desktop width (Sidebar layout) in headless
+# Chromium — the "как выглядит на компе" view, without needing the WPF app /
+# WebView2. Data is mock (no native bridge in a bare browser), but the layout is
+# the real desktop look. Cheap (~3 min, no emulator).
+
+on:
+  push:
+    branches: [ "ci/**" ]
+    paths:
+      - 'android/app/src/main/assets/webui/**'
+      - 'android/ci/desktop-shot.js'
+      - '.github/workflows/desktop-ui-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Install Playwright Chromium
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm i --no-save playwright >/dev/null 2>&1
+          npx playwright install --with-deps chromium
+      - name: Serve dist + screenshot desktop-width routes
+        run: |
+          ( cd android/app/src/main/assets/webui && python3 -m http.server 8137 ) &
+          sleep 2
+          node android/ci/desktop-shot.js
+          echo "shots:"; ls -la desktop-shots/ || true
+      - name: Montage
+        if: always()
+        run: |
+          if ls desktop-shots/*.png >/dev/null 2>&1; then
+            montage $(ls desktop-shots/*.png | sort) -tile 2x -geometry 620x+6+6 -background '#0b0b0f' desktop-montage.png || true
+          fi
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-ui
+          path: |
+            desktop-shots/
+            desktop-montage.png

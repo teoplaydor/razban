@@ -11,6 +11,9 @@ name: android-emulator-ui
 on:
   push:
     branches: [ "ci/**" ]
+    paths-ignore:
+      - 'android/ci/desktop-shot.js'
+      - '.github/workflows/desktop-ui-preview.yml'
   workflow_dispatch:
 
 permissions:
