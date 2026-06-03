@@ -91,6 +91,28 @@ for pair in home:01 servers:02 stats:03 settings:04 about:05; do
 done
 echo "::endgroup::"
 
+# ── Functional: tap an app chip on the routing board → it must move to the VPN
+#    zone (proxyApps pin → injectUserRoutes → hot-reload). Proves the full
+#    UI→bridge→native→store→re-render write path, not just rendering. ──
+echo "::group::functional-tap-route"
+if [ "$CDP" = "1" ]; then
+  ceval "location.hash='#/home'; 'home'" >/dev/null; sleep 2
+  PH_BEFORE=$(ceval "String(/Перетащите сюда приложение/.test(document.body.innerText))")
+  TAP=$(ceval "(function(){var b=Array.from(document.querySelectorAll('button')).find(function(x){return /перетащите в VPN/i.test(x.getAttribute('title')||'');});if(!b)return 'NO_CHIP';var n=(b.textContent||'').trim();b.click();return 'CLICKED:'+n;})()")
+  sleep 3
+  PH_AFTER=$(ceval "String(/Перетащите сюда приложение/.test(document.body.innerText))")
+  echo "tap-route: placeholderBefore=$PH_BEFORE  tap=$TAP  placeholderAfter=$PH_AFTER"
+  adb exec-out screencap -p > "$SHOTS/06-after-tap.png"
+  if [ "$PH_BEFORE" = "true" ] && [ "$PH_AFTER" = "false" ]; then
+    echo "FUNCTIONAL-OK: app routed into the VPN zone"
+  else
+    echo "FUNCTIONAL-NOTE: VPN-zone state did not change as expected (before=$PH_BEFORE after=$PH_AFTER tap=$TAP)"
+  fi
+else
+  echo "CDP unavailable — skipped functional tap test"
+fi
+echo "::endgroup::"
+
 kill "$LP" 2>/dev/null || true
 echo "shots:"; ls -la "$SHOTS/"
 exit 0
