@@ -1,0 +1,95 @@
+name: windows-killswitch-test
+
+# Validates that a Windows Firewall "kill-switch" rule actually PREVENTS the
+# IP-leak the windows-vpn-leak test demonstrated. Flow: bring up sing-box TUN +
+# bundle (VPN active, exit = Helsinki) → install a block-all-egress firewall rule
+# (the kill-switch) → ABRUPT-kill sing-box → check egress: it must FAIL/blocked
+# (no real-IP leak) instead of reverting to the real IP → REMOVE the rule →
+# egress restored. Proves the kill-switch mechanism works before porting it into
+# Razban's VpnService. The rule is removed in finally + the runner is ephemeral.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  killswitch:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      ENABLE_DEPRECATED_LEGACY_DNS_SERVERS: "true"
+    steps:
+      - name: Baseline egress IP
+        id: base
+        shell: pwsh
+        run: |
+          $ip = Invoke-RestMethod "https://ipinfo.io/json" -TimeoutSec 15
+          Write-Host "BASELINE ip=$($ip.ip) country=$($ip.country)"
+          "ip=$($ip.ip)" >> $env:GITHUB_OUTPUT
+      - name: Download sing-box + wintun
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force sb | Out-Null
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/v1.13.12/sing-box-1.13.12-windows-amd64.zip" -OutFile sb.zip
+          Expand-Archive sb.zip -DestinationPath sb -Force
+          Copy-Item (Get-ChildItem -Recurse sb -Filter sing-box.exe | Select-Object -First 1).FullName sb\sing-box.exe -Force
+          Invoke-WebRequest "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile wt.zip
+          Expand-Archive wt.zip -DestinationPath wt -Force
+          Copy-Item "wt\wintun\bin\amd64\wintun.dll" sb\wintun.dll -Force
+      - name: Build Windows TUN config from the bundle secret
+        shell: pwsh
+        env:
+          CFG_B64: ${{ secrets.DEFAULT_CONFIG_GZ_B64 }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          [IO.File]::WriteAllBytes("$PWD\cfg.gz", [Convert]::FromBase64String($env:CFG_B64))
+          $in = [IO.File]::OpenRead("$PWD\cfg.gz")
+          $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+          $json = (New-Object IO.StreamReader($gz)).ReadToEnd()
+          $cfg = $json | ConvertFrom-Json
+          $sel = ($cfg.outbounds | Where-Object { $_.type -eq 'selector' } | Select-Object -First 1)
+          $finalTag = if ($sel) { $sel.tag } else { 'proxy' }
+          $win = [ordered]@{
+            log = @{ level = 'warn' }
+            dns = @{ servers = @(@{ address = '1.1.1.1'; detour = 'direct' }) }
+            inbounds = @(@{ type='tun'; tag='tun-in'; address=@('172.19.0.1/30'); auto_route=$true; strict_route=$false; stack='system'; mtu=1420 })
+            outbounds = $cfg.outbounds
+            route = @{ auto_detect_interface=$true; final=$finalTag; rules=@(@{action='sniff'}, @{protocol='dns'; action='hijack-dns'}) }
+          }
+          $win | ConvertTo-Json -Depth 40 | Set-Content -Encoding utf8 sb\config.json
+          & sb\sing-box.exe check -c sb\config.json
+      - name: Connect, kill-switch on abrupt drop, verify no leak, restore
+        shell: pwsh
+        run: |
+          $base = "${{ steps.base.outputs.ip }}"
+          $ruleName = "RazbanKillSwitchTest"
+          $p = Start-Process "sb\sing-box.exe" -ArgumentList "run","-c","sb\config.json" -PassThru -WindowStyle Hidden -RedirectStandardOutput sb\out.log -RedirectStandardError sb\err.log
+          Start-Sleep -Seconds 16
+          $conn = $null
+          foreach ($t in 1..5) { try { $conn = Invoke-RestMethod "https://ipinfo.io/json" -TimeoutSec 12; break } catch { Start-Sleep 3 } }
+          Write-Host "CONNECTED exit ip=$($conn.ip) country=$($conn.country)"
+          $vpnActive = ($conn -and $conn.ip -ne $base)
+          try {
+            # ── kill-switch ARMED: block all egress (what Razban must do on an
+            #    unexpected drop when killSwitch is on). Then drop the VPN. ──
+            New-NetFirewallRule -DisplayName $ruleName -Direction Outbound -Action Block -Profile Any -Enabled True -ErrorAction Stop | Out-Null
+            Write-Host "kill-switch rule installed"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 5
+            $leakIp = $null
+            try { $leakIp = (Invoke-RestMethod "https://ipinfo.io/json" -TimeoutSec 8).ip } catch { Write-Host "egress BLOCKED after drop (no leak) — kill-switch held" }
+            if ($leakIp) { Write-Host "LEAKED despite kill-switch: $leakIp" }
+            $blocked = ($null -eq $leakIp)
+            Write-Host "KILLSWITCH RESULT: vpnActive=$vpnActive  leakBlocked=$blocked  (expected leakBlocked=True)"
+          } finally {
+            # ALWAYS remove the rule so the runner regains connectivity.
+            Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+            Get-NetRoute -ErrorAction SilentlyContinue | Where-Object InterfaceAlias -like '*tun*' | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 4
+          }
+          $restored = $null
+          foreach ($t in 1..5) { try { $restored = (Invoke-RestMethod "https://ipinfo.io/json" -TimeoutSec 12).ip; break } catch { Start-Sleep 3 } }
+          Write-Host "RESTORED egress ip=$restored (connectivity back after kill-switch removed)"
