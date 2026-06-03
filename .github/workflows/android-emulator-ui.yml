@@ -70,7 +70,8 @@ jobs:
           working-directory: android
           script: |
             set +e
-            mkdir -p "$GITHUB_WORKSPACE/android/shots"
+            SHOTS="$GITHUB_WORKSPACE/android/shots"
+            mkdir -p "$SHOTS"
             adb wait-for-device
             adb logcat -c || true
             adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/ui-logcat.txt" 2>&1 &
@@ -89,18 +90,25 @@ jobs:
             # Launch the WebView UI activity directly.
             adb shell am start -n $PKG/com.razban.app.ui.WebUiActivity
             sleep 6
-            adb exec-out screencap -p > "$GITHUB_WORKSPACE/android/shots/00-launch.png"
+            adb exec-out screencap -p > "$SHOTS/00-launch.png"
 
-            # Forward the WebView devtools unix socket for CDP.
+            # ── Forward the WebView devtools unix socket for CDP (+ diagnostics) ──
+            echo "::group::cdp-setup"
             SOCK=""
             for i in $(seq 1 30); do
-              SOCK=$(adb shell cat /proc/net/unix 2>/dev/null | grep -oE 'webview_devtools_remote_[0-9]+' | head -1)
+              SOCK=$(adb shell cat /proc/net/unix 2>/dev/null | grep -aoE 'webview_devtools_remote_[0-9]+' | head -1)
               [ -n "$SOCK" ] && break
               sleep 1
             done
-            echo "webview devtools socket: '$SOCK'"
-            if [ -n "$SOCK" ]; then adb forward tcp:9222 localabstract:$SOCK; fi
-            python3 ci/cdp-eval.py "location.href" || echo "(cdp not reachable yet)"
+            echo "devtools socket: '$SOCK'"
+            python3 -c "import websockets; print('websockets', websockets.__version__)" || echo "WEBSOCKETS IMPORT FAILED"
+            if [ -n "$SOCK" ]; then
+              adb forward tcp:9222 localabstract:$SOCK && echo "forwarded 9222 -> $SOCK"
+              python3 -c "import urllib.request,json; print('targets:', json.dumps(json.load(urllib.request.urlopen('http://127.0.0.1:9222/json',timeout=8)))[:500])" || echo "JSON ENDPOINT FAILED"
+            else
+              echo "NO devtools socket — CDP nav unavailable (will screencap home only)"
+            fi
+            echo "::endgroup::"
 
             # Poll up to ~60s for the tunnel to reach connected (auto-connect).
             echo "::group::connect-poll"
@@ -112,28 +120,27 @@ jobs:
               sleep 2
             done
             echo "CONNECTED=$CONNECTED"
+            python3 ci/cdp-eval.py "JSON.stringify({status:(document.body.innerText.match(/Подключено|Подключение|Отключено/)||[''])[0], hasSpeed:/КБ\/с|МБ\/с|Б\/с/.test(document.body.innerText), servers:(document.body.innerText.match(/VLESS|Reality|Hysteria|AnyTLS|ShadowTLS/gi)||[]).length})" || true
             echo "::endgroup::"
 
-            sleep 3
-            adb exec-out screencap -p > "$GITHUB_WORKSPACE/android/shots/00b-after-connect.png"
+            adb exec-out screencap -p > "$SHOTS/00b-after-connect.png"
 
-            # Read live throughput / session figures off the home screen.
-            echo "::group::live-data"
-            python3 ci/cdp-eval.py "JSON.stringify({status:(document.body.innerText.match(/Подключено|Подключение|Отключено/)||[''])[0], hasSpeed:/КБ\/с|МБ\/с|Б\/с/.test(document.body.innerText)})" || true
-            echo "::endgroup::"
-
-            # Full UI tour: navigate every route, screenshot + dump innerText.
+            # ── Tour every route: CDP sets the hash, screencap grabs the device frame ──
             echo "::group::ui-tour"
-            python3 ci/cdp-tour.py "$GITHUB_WORKSPACE/android/shots" || echo "tour failed"
+            for r in home:01 servers:02 stats:03 settings:04 about:05; do
+              route="/${r%%:*}"; n="${r##*:}"
+              echo "--- nav $route ---"
+              python3 ci/cdp-eval.py "location.hash='#$route'; location.hash" 2>/dev/null | tail -1
+              sleep 3
+              adb exec-out screencap -p > "$SHOTS/${n}-${r%%:*}.png"
+              echo "### $route innerText (first 400):"
+              python3 ci/cdp-eval.py "((document.querySelector('#root')||document.body).innerText||'(empty)').replace(/\s+/g,' ').slice(0,400)" 2>/dev/null
+            done
             echo "::endgroup::"
-
-            # Final full-device shot of the routing board (real framing + nav bar).
-            python3 ci/cdp-eval.py "location.hash='#/home'; 'home'" >/dev/null 2>&1 || true
-            sleep 2
-            adb exec-out screencap -p > "$GITHUB_WORKSPACE/android/shots/99-device-home.png"
 
             kill $LP 2>/dev/null || true
-            echo "shots:"; ls -la "$GITHUB_WORKSPACE/android/shots/"
+            echo "shots:"; ls -la "$SHOTS/"
+            exit 0
       - name: Montage screenshots
         if: always()
         run: |
