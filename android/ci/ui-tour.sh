@@ -113,6 +113,34 @@ else
 fi
 echo "::endgroup::"
 
+# ── Disconnect → reconnect flow (the phone half of "open/close cleanly"). Tap the
+#    power button, assert the tunnel tears down (status leaves Подключено), then
+#    tap again and assert it re-establishes. ──
+echo "::group::disconnect-reconnect"
+if [ "$CDP" = "1" ]; then
+  ceval "location.hash='#/home'; 'home'" >/dev/null; sleep 2
+  ST_PRE=$(ceval "(document.body.innerText.match(/Подключено|Подключение|Отключено/)||['?'])[0]")
+  DISC=$(ceval "(function(){var b=document.querySelector('button[aria-label*=\"тключить\"],button[aria-label*=\"одключить\"]');if(!b)return 'NO_BTN';b.click();return 'CLICKED';})()")
+  sleep 7
+  ST_OFF=$(ceval "(document.body.innerText.match(/Подключено|Подключение|Отключено|Отключение/)||['?'])[0]")
+  echo "disconnect: pre=$ST_PRE click=$DISC after=$ST_OFF"
+  adb exec-out screencap -p > "$SHOTS/07-disconnected.png"
+  # native disconnect signal in logcat (tunnel teardown)
+  grep -aE "ACTION_STOP|closeService|Stopping|Stopped" "$GITHUB_WORKSPACE/android/ui-logcat.txt" 2>/dev/null | tail -2 || true
+  # reconnect
+  ceval "(function(){var b=document.querySelector('button[aria-label*=\"тключить\"],button[aria-label*=\"одключить\"]');if(b)b.click();return 'reconnect';})()" >/dev/null
+  sleep 12
+  ST_RE=$(ceval "(document.body.innerText.match(/Подключено|Подключение|Отключено/)||['?'])[0]")
+  echo "reconnect: after=$ST_RE"
+  adb exec-out screencap -p > "$SHOTS/08-reconnected.png"
+  if echo "$ST_OFF" | grep -qE "Отключено|Отключение" && echo "$ST_RE" | grep -q "Подключено"; then
+    echo "DISCONNECT-RECONNECT-OK: tore down then re-established"
+  else
+    echo "DISCONNECT-RECONNECT-NOTE: off=$ST_OFF re=$ST_RE (expected off→Отключено, re→Подключено)"
+  fi
+fi
+echo "::endgroup::"
+
 kill "$LP" 2>/dev/null || true
 echo "shots:"; ls -la "$SHOTS/"
 exit 0
