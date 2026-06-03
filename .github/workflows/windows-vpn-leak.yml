@@ -17,6 +17,10 @@ jobs:
   leak:
     runs-on: windows-latest
     timeout-minutes: 15
+    env:
+      # The simple {servers:[{address}]} dns we build is the legacy format that
+      # sing-box 1.13 gates behind this flag; allow it for the test.
+      ENABLE_DEPRECATED_LEGACY_DNS_SERVERS: "true"
     steps:
       - name: Baseline egress IP (no VPN)
         id: base
