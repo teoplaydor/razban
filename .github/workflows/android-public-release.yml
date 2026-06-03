@@ -1,0 +1,110 @@
+name: android-public-release
+
+# Builds the PUBLIC Android APK — signed, but WITHOUT the bundled default-config
+# secret (public users redeem a code instead; we never ship a secret-embedding
+# APK to a public URL). Triggered by an `android-public-v*` tag (distinct from
+# android.yml's `android-v*`, which DOES embed the secret for private builds).
+# Attaches the APK to the matching GitHub Release and prints size + sha256 for
+# the docs/app-update.json bump.
+
+on:
+  push:
+    tags:
+      - 'android-public-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SING_BOX_TAG: v1.13.12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Set up Go 1.24
+        uses: actions/setup-go@v5
+        with: { go-version: '1.24.7' }
+      - name: Set up Android SDK + NDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK 28 + SDK
+        run: |
+          yes | sdkmanager "ndk;28.0.13004108" "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >> "$GITHUB_ENV"
+      - name: Assert NO bundled secret config (public build)
+        run: |
+          rm -f android/app/src/main/assets/default-config.json
+          if [ -f android/app/src/main/assets/default-config.json ]; then
+            echo "::error::default-config.json present — refusing to ship a secret in a public APK"; exit 1
+          fi
+          echo "no bundled config — public, secret-free build"
+      - name: Read version
+        id: ver
+        run: |
+          VN=$(grep -oE 'versionName *= *"[0-9.]+"' android/app/build.gradle.kts | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          echo "name=$VN" >> "$GITHUB_OUTPUT"
+          echo "version: $VN"
+      - name: Build libbox.aar
+        run: bash android/build-libbox.sh "$SING_BOX_TAG"
+      - name: Decode keystore
+        id: ks
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_B64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/razban.jks"
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::No KEYSTORE_B64 — cannot sign a public release"; exit 1
+          fi
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Assemble signed release APK (no bundled secret)
+        working-directory: android
+        env:
+          RAZBAN_KEYSTORE: ${{ format('{0}/razban.jks', runner.temp) }}
+          RAZBAN_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          RAZBAN_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RAZBAN_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          UPDATE_KEY: ${{ secrets.UPDATE_KEY }}
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
+      - name: Verify + name APK
+        id: apk
+        working-directory: android
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          # Hard gate: the shipped APK must NOT contain the bundled config.
+          if unzip -l "$APK" | grep -q "assets/default-config.json"; then
+            echo "::error::APK contains default-config.json — secret leak, aborting"; exit 1
+          fi
+          mkdir -p out
+          OUT="out/Razban-${{ steps.ver.outputs.name }}.apk"
+          cp "$APK" "$OUT"
+          SHA=$(sha256sum "$OUT" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "$OUT")
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "::notice::Razban-${{ steps.ver.outputs.name }}.apk  size=$SIZE  sha256=$SHA"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: razban-public-apk
+          path: android/out/Razban-${{ steps.ver.outputs.name }}.apk
+      - name: Attach to release (tag builds)
+        if: startsWith(github.ref, 'refs/tags/android-public-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/out/Razban-${{ steps.ver.outputs.name }}.apk
+          body: |
+            Razban Android ${{ steps.ver.outputs.name }}
+
+            Совместимость: работает на Android 7+ (исправлен белый экран на старых
+            System WebView — es2015-сборка, полифиллы, встроенный bridge-шим).
+            Проверено на эмуляторах API 24/29/34: онбординг, коннект, маршрутизация,
+            отключение/реконнект, открытие реальных сайтов.
+
+            SHA-256: `${{ steps.apk.outputs.sha }}`
