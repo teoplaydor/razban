@@ -98,6 +98,20 @@ jobs:
           grep -aE "Go      : panic|Fatal signal|AndroidRuntime.*FATAL|SIGSEGV|SIGABRT" "$F" 2>/dev/null | head -20 || echo none
           echo "===== WebView console ====="
           grep -aiE "chromium.*CONSOLE" "$F" 2>/dev/null | head -40 || echo none
+      - name: Assert no fatal JS errors (compat gate)
+        if: always()
+        run: |
+          F="$GITHUB_WORKSPACE/android/ui-logcat.txt"
+          # These are the bundle-killing signatures that leave a blank UI on old
+          # WebViews (es2020 syntax, missing modern runtime APIs). If any appear,
+          # the UI is broken on this API level → fail so the regression is caught.
+          HITS=$(grep -aoiE "Uncaught SyntaxError|Unexpected token|__razbanDeliver is not a function|randomUUID is not a function|is not a function|ReferenceError" "$F" 2>/dev/null | sort | uniq -c || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::Fatal WebView JS errors on API ${{ matrix.api-level }} — UI is broken:"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "No fatal WebView JS errors on API ${{ matrix.api-level }} ✓"
       - name: Upload screenshots + montage
         if: always()
         uses: actions/upload-artifact@v4

@@ -8,6 +8,25 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <title>Razban</title>
+    <!-- Polyfills for old Android System WebViews (down to Chrome 51 / API 24).
+         esbuild downlevels SYNTAX but NOT these runtime globals, and the React
+         dist is shared with the desktop, so old phones hit them. This classic
+         script runs BEFORE the deferred module bundle (framer-motion calls
+         queueMicrotask at import time → ReferenceError without this). -->
+    <script>
+      (function () {
+        if (typeof window.queueMicrotask !== 'function') {
+          window.queueMicrotask = function (cb) {
+            Promise.resolve().then(cb).catch(function (e) {
+              setTimeout(function () { throw e; }, 0);
+            });
+          };
+        }
+        if (typeof window.globalThis === 'undefined') {
+          try { window.globalThis = window; } catch (e) {}
+        }
+      })();
+    </script>
     <script type="module" crossorigin src="./assets/index-Ck4F4jJM.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/react-DjQ2LsK7.js">
     <link rel="modulepreload" crossorigin href="./assets/framer-B7xh2Myh.js">
