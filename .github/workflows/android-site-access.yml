@@ -1,0 +1,94 @@
+name: android-site-access
+
+# "Открываются ли сайты" — boots the emulator, builds with the REAL bundled
+# config, connects to the production VPS and fetches real websites, asserting
+# they actually load (tunneled youtube/google/github + direct ya.ru). Proves the
+# tunnel carries real site traffic AND that direct egress keeps internet while
+# the VPN is up. Runs ONLY SiteAccessTest.
+
+on:
+  push:
+    branches: [ "ci/**" ]
+    paths:
+      - 'android/app/src/androidTest/**'
+      - 'android/app/src/main/java/com/razban/app/bg/**'
+      - 'android/app/src/main/java/com/razban/app/config/**'
+      - '.github/workflows/android-site-access.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  site-access:
+    runs-on: ubuntu-latest
+    env:
+      SING_BOX_TAG: v1.13.12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Set up Go 1.24
+        uses: actions/setup-go@v5
+        with: { go-version: '1.24.7' }
+      - name: Set up Android SDK + NDK
+        uses: android-actions/setup-android@v3
+      - name: Install NDK 28 + SDK
+        run: |
+          yes | sdkmanager "ndk;28.0.13004108" "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >> "$GITHUB_ENV"
+      - name: Inject bundled default config (real VPS bundle)
+        run: |
+          if [ -n "${{ secrets.DEFAULT_CONFIG_GZ_B64 }}" ]; then
+            mkdir -p android/app/src/main/assets
+            echo "${{ secrets.DEFAULT_CONFIG_GZ_B64 }}" | base64 -d | gunzip > android/app/src/main/assets/default-config.json
+            echo "default-config.json injected ($(wc -c < android/app/src/main/assets/default-config.json) bytes)"
+          else
+            echo "::error::No DEFAULT_CONFIG_GZ_B64 secret — site-access test needs the real bundle"; exit 1
+          fi
+      - name: Build libbox.aar
+        run: bash android/build-libbox.sh "$SING_BOX_TAG"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Site-access test on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          working-directory: android
+          script: |
+            adb logcat -c || true
+            adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/site-logcat.txt" 2>&1 &
+            set +e
+            gradle connectedDebugAndroidTest --no-daemon --stacktrace \
+              -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.SiteAccessTest
+            rc=$?
+            sleep 2
+            echo "rc=$rc"
+            exit $rc
+      - name: Show site-access results
+        if: always()
+        run: |
+          F="$GITHUB_WORKSPACE/android/site-logcat.txt"
+          echo "===== site-access ====="
+          grep -aE "site-access" "$F" 2>/dev/null | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | head -40 || echo none
+          echo "===== razban-core (connect) ====="
+          grep -aE "startTunnel|openTun|service started OK" "$F" 2>/dev/null | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | head -20 || echo none
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-access-reports
+          path: |
+            android/app/build/reports/androidTests/
+            android/site-logcat.txt
