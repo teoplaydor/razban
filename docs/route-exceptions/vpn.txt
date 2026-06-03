@@ -1,0 +1,59 @@
+# Razban — route exceptions: FORCE VPN (remotely-updatable).
+# Sites whose geo-block is rendered client-side / enforced behind auth, so they
+# return a BYTE-IDENTICAL HTTP response worldwide (verified RU-vantage 2026-06-03:
+# gemini/notebooklm/claude = 200/302 from RU, same as US/DE). A network/HTTP probe
+# CANNOT see the block — it would wrongly route them direct. This list forces them
+# through the VPN exit. The probe still handles everything that DOES emit a signal
+# (youtube timeout, chatgpt 403, SNI/DNS/stub/redirect) — those need not be listed.
+# EDIT + COMMIT here → clients refresh within 24h, no rebuild. One FQDN per line.
+# BackgroundProber.ColdBootFallback is the frozen offline seed of this same set.
+
+# Anthropic / Claude
+anthropic.com
+api.anthropic.com
+console.anthropic.com
+claude.ai
+# OpenAI / ChatGPT
+openai.com
+chatgpt.com
+chat.openai.com
+platform.openai.com
+api.openai.com
+sora.com
+# Google AI — gemini family (blocked from RU while google.com search stays open)
+gemini.google.com
+bard.google.com
+aistudio.google.com
+ai.google.dev
+notebooklm.google.com
+notebooklm.google
+labs.google.com
+labs.google
+deepmind.google
+generativelanguage.googleapis.com
+# Microsoft / GitHub Copilot
+copilot.microsoft.com
+copilot.cloud.microsoft
+copilot.bing.com
+githubcopilot.com
+api.githubcopilot.com
+# Other LLM / GenAI
+perplexity.ai
+api.perplexity.ai
+poe.com
+character.ai
+mistral.ai
+chat.mistral.ai
+api.mistral.ai
+cohere.com
+cohere.ai
+api.cohere.com
+x.ai
+grok.com
+midjourney.com
+ideogram.ai
+krea.ai
+suno.com
+udio.com
+replicate.com
+huggingface.co
