@@ -68,79 +68,9 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           working-directory: android
-          script: |
-            set +e
-            SHOTS="$GITHUB_WORKSPACE/android/shots"
-            mkdir -p "$SHOTS"
-            adb wait-for-device
-            adb logcat -c || true
-            adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/ui-logcat.txt" 2>&1 &
-            LP=$!
-
-            echo "::group::install"
-            gradle :app:installDebug --no-daemon --stacktrace
-            echo "::endgroup::"
-
-            # Pre-grant everything the app would otherwise prompt for, so the
-            # 1.2s auto-connect goes through silently and the notification shows.
-            adb shell appops set $PKG ACTIVATE_VPN allow || true
-            adb shell appops set $PKG REQUEST_INSTALL_PACKAGES allow || true
-            adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS || true
-
-            # Launch the WebView UI activity directly.
-            adb shell am start -n $PKG/com.razban.app.ui.WebUiActivity
-            sleep 6
-            adb exec-out screencap -p > "$SHOTS/00-launch.png"
-
-            # ── Forward the WebView devtools unix socket for CDP (+ diagnostics) ──
-            echo "::group::cdp-setup"
-            SOCK=""
-            for i in $(seq 1 30); do
-              SOCK=$(adb shell cat /proc/net/unix 2>/dev/null | grep -aoE 'webview_devtools_remote_[0-9]+' | head -1)
-              [ -n "$SOCK" ] && break
-              sleep 1
-            done
-            echo "devtools socket: '$SOCK'"
-            python3 -c "import websockets; print('websockets', websockets.__version__)" || echo "WEBSOCKETS IMPORT FAILED"
-            if [ -n "$SOCK" ]; then
-              adb forward tcp:9222 localabstract:$SOCK && echo "forwarded 9222 -> $SOCK"
-              python3 -c "import urllib.request,json; print('targets:', json.dumps(json.load(urllib.request.urlopen('http://127.0.0.1:9222/json',timeout=8)))[:500])" || echo "JSON ENDPOINT FAILED"
-            else
-              echo "NO devtools socket — CDP nav unavailable (will screencap home only)"
-            fi
-            echo "::endgroup::"
-
-            # Poll up to ~60s for the tunnel to reach connected (auto-connect).
-            echo "::group::connect-poll"
-            CONNECTED=0
-            for i in $(seq 1 30); do
-              ST=$(python3 ci/cdp-eval.py "(document.body.innerText.match(/Подключено|Подключение|Отключено|Ошибка|Нет конфиг/)||['?'])[0]" 2>/dev/null | tail -1)
-              echo "ui-status[$i]: $ST"
-              if echo "$ST" | grep -q "Подключено"; then CONNECTED=1; break; fi
-              sleep 2
-            done
-            echo "CONNECTED=$CONNECTED"
-            python3 ci/cdp-eval.py "JSON.stringify({status:(document.body.innerText.match(/Подключено|Подключение|Отключено/)||[''])[0], hasSpeed:/КБ\/с|МБ\/с|Б\/с/.test(document.body.innerText), servers:(document.body.innerText.match(/VLESS|Reality|Hysteria|AnyTLS|ShadowTLS/gi)||[]).length})" || true
-            echo "::endgroup::"
-
-            adb exec-out screencap -p > "$SHOTS/00b-after-connect.png"
-
-            # ── Tour every route: CDP sets the hash, screencap grabs the device frame ──
-            echo "::group::ui-tour"
-            for r in home:01 servers:02 stats:03 settings:04 about:05; do
-              route="/${r%%:*}"; n="${r##*:}"
-              echo "--- nav $route ---"
-              python3 ci/cdp-eval.py "location.hash='#$route'; location.hash" 2>/dev/null | tail -1
-              sleep 3
-              adb exec-out screencap -p > "$SHOTS/${n}-${r%%:*}.png"
-              echo "### $route innerText (first 400):"
-              python3 ci/cdp-eval.py "((document.querySelector('#root')||document.body).innerText||'(empty)').replace(/\s+/g,' ').slice(0,400)" 2>/dev/null
-            done
-            echo "::endgroup::"
-
-            kill $LP 2>/dev/null || true
-            echo "shots:"; ls -la "$SHOTS/"
-            exit 0
+          # The action runs each `script:` line in its own `sh -c`, so all the
+          # real logic lives in one bash file where state persists. See ui-tour.sh.
+          script: bash ci/ui-tour.sh
       - name: Montage screenshots
         if: always()
         run: |
