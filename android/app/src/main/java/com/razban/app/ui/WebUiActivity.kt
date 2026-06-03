@@ -69,7 +69,11 @@ class WebUiActivity : AppCompatActivity() {
 
         bridge = WebUiBridge(applicationContext, onConnect = { runOnUiThread { requestConnect() } },
             onDisconnect = { runOnUiThread { stopVpn() } })
-        bridge.deliver = { json -> web.post { web.evaluateJavascript("window.__razbanDeliver(${JSONObject.quote(json)})", null) } }
+        // Guard with `&&`: a native push (e.g. the auto-connect vpn.state) can
+        // fire before the document-start shim defined __razbanDeliver, especially
+        // on old WebViews — without the guard that logs "is not a function" and
+        // the event is lost. The App.tsx status poll recovers any missed push.
+        bridge.deliver = { json -> web.post { web.evaluateJavascript("window.__razbanDeliver && window.__razbanDeliver(${JSONObject.quote(json)})", null) } }
 
         web.settings.apply {
             javaScriptEnabled = true

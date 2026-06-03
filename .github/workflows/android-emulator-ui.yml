@@ -105,7 +105,11 @@ jobs:
           # These are the bundle-killing signatures that leave a blank UI on old
           # WebViews (es2020 syntax, missing modern runtime APIs). If any appear,
           # the UI is broken on this API level → fail so the regression is caught.
-          HITS=$(grep -aoiE "Uncaught SyntaxError|Unexpected token|__razbanDeliver is not a function|randomUUID is not a function|is not a function|ReferenceError" "$F" 2>/dev/null | sort | uniq -c || true)
+          # Bundle-killers only (SyntaxError / missing global / ReferenceError +
+          # the specific randomUUID regression). NOT the generic "is not a
+          # function" — that also matches the benign early-push __razbanDeliver
+          # race which the App.tsx status poll recovers from.
+          HITS=$(grep -aoiE "Uncaught SyntaxError|Unexpected token|is not defined|ReferenceError|randomUUID is not a function" "$F" 2>/dev/null | sort | uniq -c || true)
           if [ -n "$HITS" ]; then
             echo "::error::Fatal WebView JS errors on API ${{ matrix.api-level }} — UI is broken:"
             echo "$HITS"
