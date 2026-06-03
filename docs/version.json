@@ -1,25 +1,20 @@
 {
-  "latestVersion": "0.1.0",
-  "releaseDate": "2026-05-28",
+  "latestVersion": "0.1.18",
+  "releaseDate": "2026-06-03",
   "mandatory": false,
-  "notes": "Initial release.",
+  "notes": "Глобус с континентами (маршрут вход→выход, подсветка страны выхода) + простой/продвинутый режим.",
   "windows": {
     "portable": {
-      "url": "https://github.com/teoplaydor/razban/releases/download/v0.1.0/Razban-portable-0.1.0.zip",
-      "size": 352693540,
-      "sha256": "db1cebb8a0fa2238172f89362f83402ee00078f4a2c0339cd69c3a9b737d752d"
-    },
-    "installer": {
-      "url": "https://github.com/teoplaydor/razban/releases/download/v0.1.0/Razban-Setup-0.1.0.exe",
-      "size": 288600196,
-      "sha256": "07697bd00aa1b7463aa7cffdcc5a40b06beef9b2332d72635a85cb533de25b4a"
+      "url": "https://github.com/teoplaydor/razban/releases/download/desktop-v0.1.18/Razban-portable-0.1.18.zip",
+      "size": 352766037,
+      "sha256": "c3fde5a9080f8e27b7516443f4e454bc8f4c9bfe33772bdd8bb0d3e3265caf498"
     }
   },
   "android": {
     "available": true,
-    "version": "0.1.17",
-    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.17/Razban-0.1.17.apk",
-    "size": 124665613,
-    "sha256": "1432ce2ad19b1107b2b388c3d6edb81b97e126bd99e15ef1d46a47b4b8287ac4"
+    "version": "0.1.18",
+    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.18/Razban-0.1.18.apk",
+    "size": 124677637,
+    "sha256": "ba450b0f40aefe19974f4f7d6acf044242e5ba24cbfdb784b3ce7311dd271234"
   }
 }

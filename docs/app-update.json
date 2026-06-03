@@ -1,9 +1,9 @@
 {
-  "versionCode": 18,
-  "versionName": "0.1.17",
-  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.17/Razban-0.1.17.apk",
-  "size": 124665613,
-  "sha256": "1432ce2ad19b1107b2b388c3d6edb81b97e126bd99e15ef1d46a47b4b8287ac4",
+  "versionCode": 19,
+  "versionName": "0.1.18",
+  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.18/Razban-0.1.18.apk",
+  "size": 124677637,
+  "sha256": "ba450b0f40aefe19974f4f7d6acf044242e5ba24cbfdb784b3ce7311dd271234",
   "mandatory": false,
-  "notes": "Работает на старых Android (раньше был белый экран на Android ≤10). Авто-маршрутизация: российские сервисы идут напрямую (быстрее), заблокированное — через VPN. Исправлен экран «Настройки» и «Статистика»."
+  "notes": "Новый главный экран: глобус с континентами — видно маршрут вход→выход и подсвечена страна выхода. Простой и продвинутый режимы (по умолчанию простой). Защита от утечки при резком разрыве + умная авто-маршрутизация."
 }
