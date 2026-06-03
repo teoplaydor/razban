@@ -27,6 +27,26 @@
         }
       })();
     </script>
+    <!-- Android bridge shim, installed INLINE so it's guaranteed present before
+         the module bundle. The native WebUiActivity also injects this via a
+         document-start script, but old System WebViews (Chrome 51 / API 24) lack
+         DOCUMENT_START_SCRIPT and the onPageStarted fallback races the bundle →
+         the bridge never saw window.chrome.webview → stuck in mock mode (demo
+         servers, no connect). Guarded: only runs on Android (AndroidBridgeNative
+         present) and never overrides a real host (desktop WebView2). -->
+    <script>
+      (function () {
+        if (window.chrome && window.chrome.webview) return;      // real host (desktop) or already shimmed
+        if (typeof AndroidBridgeNative === 'undefined') return;  // not Android — leave native detection
+        var listeners = [];
+        window.chrome = { webview: {
+          postMessage: function (m) { try { AndroidBridgeNative.postMessage(typeof m === 'string' ? m : JSON.stringify(m)); } catch (e) {} },
+          addEventListener: function (t, cb) { if (t === 'message') listeners.push(cb); },
+          removeEventListener: function (t, cb) { var i = listeners.indexOf(cb); if (i >= 0) listeners.splice(i, 1); }
+        } };
+        window.__razbanDeliver = function (s) { var ev = { data: s }; for (var i = 0; i < listeners.length; i++) { try { listeners[i](ev); } catch (e) { console.error(e); } } };
+      })();
+    </script>
     <script type="module" crossorigin src="./assets/index-CDPm9tL-.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/react-DjQ2LsK7.js">
     <link rel="modulepreload" crossorigin href="./assets/framer-B7xh2Myh.js">
