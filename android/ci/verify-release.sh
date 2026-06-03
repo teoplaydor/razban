@@ -58,10 +58,21 @@ echo "CONNECTED=$CONN"
 echo "::endgroup::"
 adb exec-out screencap -p > "$SHOTS/01-connected.png"
 
-# Real site access from the device (traffic goes through the TUN when connected).
-echo "::group::site-access (toybox wget through the tunnel)"
+# Real site access from the device: open sites in the system browser (traffic
+# goes through the TUN) and screenshot them — the visual "открывается ли сайт"
+# proof on the SHIPPED apk. Also a toybox-wget byte count as a secondary signal
+# (toybox may lack HTTPS → reported, not fatal).
+echo "::group::site-access (open real sites through the tunnel)"
+BROWSER=$(adb shell cmd package resolve-activity -a android.intent.action.VIEW -d "https://example.com" 2>/dev/null | grep -aoE "packageName=[^ ]+" | head -1)
+echo "browser resolver: $BROWSER"
+adb shell am start -a android.intent.action.VIEW -d "https://www.youtube.com/" >/dev/null 2>&1
+sleep 10
+adb exec-out screencap -p > "$SHOTS/02-site-youtube.png"
+adb shell am start -a android.intent.action.VIEW -d "https://ya.ru/" >/dev/null 2>&1
+sleep 9
+adb exec-out screencap -p > "$SHOTS/03-site-yandex.png"
 for url in https://www.youtube.com/ https://ya.ru/; do
-  OUT=$(adb shell "toybox wget -q -O /data/local/tmp/o '$url' >/dev/null 2>&1 && toybox wc -c </data/local/tmp/o 2>/dev/null || echo FAIL")
+  OUT=$(adb shell "toybox wget -q -O /data/local/tmp/o '$url' >/dev/null 2>&1 && toybox wc -c </data/local/tmp/o 2>/dev/null || echo no-wget-https")
   echo "wget $url -> bytes=$OUT"
 done
 echo "::endgroup::"
