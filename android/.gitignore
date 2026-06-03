@@ -7,3 +7,4 @@ local.properties
 .idea/
 # Bundled default config (injected from CI secret, never committed)
 app/src/main/assets/default-config.json
+app/libs/*.jar

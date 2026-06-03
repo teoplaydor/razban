@@ -143,7 +143,25 @@ object CoreStatus : CommandClientHandler {
         downlinkTotal = message.downlinkTotal
         memory = message.memory
         computeRates()
+        try { onTick?.invoke() } catch (_: Exception) {}
     }
+
+    /** Called once per status tick (~1s) while connected — RazbanVpnService uses
+     *  it to refresh the foreground notification with live speed/session totals. */
+    @Volatile var onTick: (() -> Unit)? = null
+
+    private fun fmtBytes(b: Long): String = when {
+        b >= 1_073_741_824 -> "%.2f ГБ".format(b / 1_073_741_824.0)
+        b >= 1_048_576     -> "%.1f МБ".format(b / 1_048_576.0)
+        b >= 1024          -> "%.0f КБ".format(b / 1024.0)
+        else               -> "$b Б"
+    }
+
+    /** "Подключено · ↓ 1.2 МБ/с  ↑ 340 КБ/с · за сессию 45.0 МБ" — the live
+     *  foreground-notification body. */
+    fun notifLine(): String =
+        "Подключено · ↓ ${fmtBytes(downlink)}/с  ↑ ${fmtBytes(uplink)}/с · " +
+        "за сессию ${fmtBytes(downlinkTotal + uplinkTotal)}"
 
     override fun writeConnectionEvents(events: ConnectionEvents) {
         try {

@@ -109,6 +109,11 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 // Subscribe to the core's live status stream → real up/down
                 // numbers for the UI (vpn.stats / throughput bars).
                 CoreStatus.start()
+                // Live foreground notification: flips the stale "Подключение" to
+                // "Подключено" + live speed/session totals each status tick (~1s).
+                CoreStatus.onTick = {
+                    try { Notifications.update(this@RazbanVpnService, CoreStatus.notifLine()) } catch (_: Exception) {}
+                }
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "startTunnel FAILED", t)
                 writeDebugMessage("start failed: ${t.message}")
@@ -134,6 +139,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         if (status == Status.Stopping || status == Status.Stopped) return
         status = Status.Stopping
         scope.launch {
+            CoreStatus.onTick = null
             CoreStatus.stop()
             try { commandServer?.closeService() } catch (_: Throwable) {}
             try { commandServer?.close() } catch (_: Throwable) {}
