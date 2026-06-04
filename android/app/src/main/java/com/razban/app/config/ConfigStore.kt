@@ -205,7 +205,40 @@ object ConfigStore {
         // config matches the host AND its subtree the same way.
         normalizeExactDomains(root)
 
+        // Blanket RU ccTLD → direct (.ru / .su / .xn--p1ai = punycode .рф). Russian
+        // domains must egress on the real RU IP — a foreign exit hits their reverse
+        // geo-fence or just adds latency. This routes EVERY .ru direct from the FIRST
+        // packet, instead of waiting for the runtime GeoClassifier to observe + pin
+        // each host (the window where yandex.ru briefly tunneled). User pins
+        // (injectUserRoutes) still splice ABOVE this, so an explicit override wins.
+        ensureRuDirect(root)
+
         return root.toString(2)
+    }
+
+    private fun ensureRuDirect(root: JSONObject) {
+        val route = root.optJSONObject("route") ?: return
+        val rules = route.optJSONArray("rules") ?: JSONArray()
+        // idempotent — skip if a ".ru" direct suffix rule is already present
+        for (i in 0 until rules.length()) {
+            val r = rules.optJSONObject(i) ?: continue
+            if (r.optString("outbound") != "direct") continue
+            val ds = r.optJSONArray("domain_suffix") ?: continue
+            for (j in 0 until ds.length()) if (ds.optString(j) == ".ru") return
+        }
+        val ruRule = routeRule("domain_suffix",
+            JSONArray(listOf(".ru", ".su", ".xn--p1ai")), "direct") ?: return
+        // splice after the leading action rules (sniff / hijack-dns / anti-loop)
+        val merged = JSONArray()
+        var injected = false
+        for (i in 0 until rules.length()) {
+            val r = rules.optJSONObject(i)
+            val isAction = r != null && (r.has("action") || r.optString("protocol").isNotEmpty())
+            if (!injected && !isAction) { merged.put(ruRule); injected = true }
+            merged.put(rules.get(i))
+        }
+        if (!injected) merged.put(ruRule)
+        route.put("rules", merged)
     }
 
     private fun normalizeExactDomains(root: JSONObject) {
