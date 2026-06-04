@@ -93,5 +93,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Fires when DownloadManager finishes the update APK → verify + install.
+             exported=true: it's a system broadcast (ACTION_DOWNLOAD_COMPLETE). -->
+        <receiver
+            android:name=".update.UpdateInstallReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>

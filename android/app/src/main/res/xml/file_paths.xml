@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- The downloaded update.apk lives in getCacheDir(). -->
+    <!-- The downloaded update.apk lives in getCacheDir() (legacy) or, with the
+         DownloadManager-based updater, getExternalFilesDir() (app-specific). -->
     <cache-path name="apk" path="." />
+    <external-files-path name="apk-ext" path="." />
 </paths>

@@ -72,7 +72,7 @@ jobs:
           script: |
             adb logcat -c || true
             adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/site-logcat.txt" 2>&1 &
-            gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.SiteAccessTest --no-daemon --stacktrace
+            gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.SiteAccessTest,com.razban.app.UpdaterDownloadTest --no-daemon --stacktrace
       - name: Show site-access results
         if: always()
         run: |
