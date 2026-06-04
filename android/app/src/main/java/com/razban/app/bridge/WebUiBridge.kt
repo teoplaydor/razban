@@ -264,12 +264,20 @@ class WebUiBridge(
                     .put("server", addr.first).put("port", addr.second)
                     .put("priority", prio++))
             }
-            arr.put(JSONObject()
+            val host = protos.firstOrNull()?.third?.first ?: ""
+            kickCountry(host)                       // resolve exit country (async, cached)
+            val cc = countryCache[host]
+            val obj = JSONObject()
                 .put("id", "bundle").put("name", "Razban (мульти-протокол)")
-                .put("host", protos.firstOrNull()?.third?.first ?: "")
+                .put("host", host)
                 .put("active", true)
                 .put("protocolCount", protos.size)
-                .put("endpoints", endpoints))
+                .put("endpoints", endpoints)
+            if (cc != null) {                       // → globe draws the you→exit arc + highlight
+                obj.put("countryCode", cc)
+                obj.put("countryName", ccNames[cc] ?: cc)
+            }
+            arr.put(obj)
         }
         return arr
     }
@@ -296,6 +304,36 @@ class WebUiBridge(
             pingInFlight.remove(tag)
         }.start()
     }
+
+    // ── bundle-host country cache (drives the home globe's exit-country arc) ──
+    // The desktop bundle carries countryCode; the Android bundle only has the host,
+    // so the globe could only draw "вход" (one dot). Resolve the host's country via
+    // the same ipinfo path GeoClassifier uses, cached, and feed it to bundlesJson so
+    // the globe draws the flying you→exit arc + highlights the exit country.
+    private val countryCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val countryInFlight = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    private fun kickCountry(host: String) {
+        if (host.isEmpty() || countryCache.containsKey(host)) return
+        if (!countryInFlight.add(host)) return
+        Thread {
+            try {
+                val ip = if (host.matches(Regex("^[0-9.]+$"))) host
+                         else java.net.InetAddress.getByName(host).hostAddress ?: host
+                val cc = com.razban.app.bg.GeoClassifier.countryOf(ip)
+                if (cc != null) countryCache[host] = cc
+            } catch (_: Exception) { /* leave uncached; retried next poll */ }
+            finally { countryInFlight.remove(host) }
+        }.apply { isDaemon = true }.start()
+    }
+
+    // ISO_A2 → Russian name for the deploy/common exit countries (globe label).
+    private val ccNames = mapOf(
+        "FI" to "Финляндия", "NL" to "Нидерланды", "DE" to "Германия", "LV" to "Латвия",
+        "SE" to "Швеция", "GB" to "Великобритания", "FR" to "Франция", "US" to "США",
+        "PL" to "Польша", "EE" to "Эстония", "LT" to "Литва", "NO" to "Норвегия",
+        "CH" to "Швейцария", "TR" to "Турция", "JP" to "Япония", "SG" to "Сингапур",
+        "KZ" to "Казахстан", "AM" to "Армения", "RU" to "Россия")
 
     /** {endpoints:[{tag, ok, latencyMs, pinging}]} — the bundle card's badges.
      *  Real per-protocol TCP reachability: pings each endpoint directly (no VPN

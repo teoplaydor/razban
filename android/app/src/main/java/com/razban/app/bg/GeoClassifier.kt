@@ -130,6 +130,10 @@ object GeoClassifier {
         } catch (_: Exception) { false }
     }
 
+    /** Public wrapper so other components (e.g. the bundle card's exit-country
+     *  globe highlight) can resolve a server IP's country with the same path. */
+    fun countryOf(ip: String): String? = geoCountry(ip)
+
     /** 2-letter country code for an IP via ipinfo.io (HTTPS, no key). null on error. */
     private fun geoCountry(ip: String): String? {
         return try {
