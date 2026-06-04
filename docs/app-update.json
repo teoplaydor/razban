@@ -1,9 +1,9 @@
 {
-  "versionCode": 19,
-  "versionName": "0.1.18",
-  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.18/Razban-0.1.18.apk",
+  "versionCode": 20,
+  "versionName": "0.1.19",
+  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.19/Razban-0.1.19.apk",
   "size": 124677637,
-  "sha256": "ba450b0f40aefe19974f4f7d6acf044242e5ba24cbfdb784b3ce7311dd271234",
+  "sha256": "403455a13bb08272e4dcffbbdd856d1d6338b5dc696cae7af8a85782ab829a95",
   "mandatory": false,
-  "notes": "Новый главный экран: глобус с континентами — видно маршрут вход→выход и подсвечена страна выхода. Простой и продвинутый режимы (по умолчанию простой). Защита от утечки при резком разрыве + умная авто-маршрутизация."
+  "notes": "Глобус на телефоне теперь рисует линию вход→выход и подсвечивает страну выхода. Российские (.ru) сайты идут напрямую сразу — быстрее. Простой/продвинутый режим."
 }
