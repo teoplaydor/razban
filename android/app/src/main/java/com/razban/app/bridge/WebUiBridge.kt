@@ -313,15 +313,21 @@ class WebUiBridge(
     private val countryCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val countryInFlight = java.util.Collections.synchronizedSet(HashSet<String>())
 
+    // Instant country for known deploy hosts so the globe draws the exit arc on
+    // the FIRST frame, without waiting on the async ipinfo round-trip (which the
+    // UI screenshot can race). Geo fills in any other server.
+    private val knownHostCc = mapOf("78.17.1.133" to "FI")
+
     private fun kickCountry(host: String) {
         if (host.isEmpty() || countryCache.containsKey(host)) return
+        knownHostCc[host]?.let { countryCache[host] = it; return }   // instant
         if (!countryInFlight.add(host)) return
         Thread {
             try {
                 val ip = if (host.matches(Regex("^[0-9.]+$"))) host
                          else java.net.InetAddress.getByName(host).hostAddress ?: host
                 val cc = com.razban.app.bg.GeoClassifier.countryOf(ip)
-                if (cc != null) countryCache[host] = cc
+                if (cc != null) { countryCache[host] = cc; android.util.Log.i("razban-geo", "bundle host $host → $cc") }
             } catch (_: Exception) { /* leave uncached; retried next poll */ }
             finally { countryInFlight.remove(host) }
         }.apply { isDaemon = true }.start()
