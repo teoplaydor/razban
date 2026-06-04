@@ -1,5 +1,5 @@
 {
-  "latestVersion": "0.1.19",
+  "latestVersion": "0.1.20",
   "releaseDate": "2026-06-04",
   "mandatory": false,
   "notes": "Глобус с континентами (маршрут вход→выход, подсветка страны выхода) + простой/продвинутый режим.",
@@ -12,9 +12,9 @@
   },
   "android": {
     "available": true,
-    "version": "0.1.19",
-    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.19/Razban-0.1.19.apk",
-    "size": 124677637,
-    "sha256": "403455a13bb08272e4dcffbbdd856d1d6338b5dc696cae7af8a85782ab829a95"
+    "version": "0.1.20",
+    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.20/Razban-0.1.20.apk",
+    "size": 124677765,
+    "sha256": "c2f58fe6ceb22c417cca3fb3d6039a402210fd5401e355bff265a95afae1de8c"
   }
 }
