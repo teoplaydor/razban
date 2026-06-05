@@ -1,8 +1,8 @@
 {
-  "latestVersion": "0.1.21",
+  "latestVersion": "0.1.22",
   "releaseDate": "2026-06-05",
   "mandatory": false,
-  "notes": "Объёмный глобус с континентами, честная проверка серверов (мёртвый больше не «живой»), внутренние уведомления (kill-switch/конфликт VPN/обновления).",
+  "notes": "Глобус-линиями: вращение пальцем, флаги и подсветка стран входа/выхода, влёт-зум при подключении с кропом до двух стран. Честная проверка серверов + внутренние уведомления.",
   "windows": {
     "version": "0.1.18",
     "portable": {
@@ -13,9 +13,9 @@
   },
   "android": {
     "available": true,
-    "version": "0.1.21",
-    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.21/Razban-0.1.21.apk",
-    "size": 124680193,
-    "sha256": "6392374f782b90110060c1b5b2d2bebc5e386a1646c417aafaedbaa2eba0ee46"
+    "version": "0.1.22",
+    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.22/Razban-0.1.22.apk",
+    "size": 124681545,
+    "sha256": "9daebbe69beea8ea87ab0e95806c8ab4ffab9c79595cfdecd0d94880e14839d2"
   }
 }
