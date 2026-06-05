@@ -4,6 +4,7 @@
   "mandatory": false,
   "notes": "Глобус с континентами (маршрут вход→выход, подсветка страны выхода) + простой/продвинутый режим.",
   "windows": {
+    "version": "0.1.18",
     "portable": {
       "url": "https://github.com/teoplaydor/razban/releases/download/desktop-v0.1.18/Razban-portable-0.1.18.zip",
       "size": 352766037,

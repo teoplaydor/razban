@@ -286,18 +286,70 @@ class WebUiBridge(
     private val healthCache = java.util.concurrent.ConcurrentHashMap<String, Triple<Boolean, Int, Long>>()
     private val pingInFlight = java.util.Collections.synchronizedSet(HashSet<String>())
 
-    /** Fire-and-forget TCP connect to host:port on a worker thread; stores
-     *  (ok, latencyMs, timestamp) in healthCache. Dedups by tag so a polling UI
-     *  doesn't spawn a new socket every call. */
-    private fun kickPing(tag: String, host: String, port: Int) {
+    private fun isTlsType(t: String) =
+        t == "vless" || t == "vmess" || t == "trojan" || t == "anytls" || t == "shadowtls" || t == "naive"
+    private fun isUdpType(t: String) =
+        t == "hysteria2" || t == "hysteria" || t == "tuic" || t == "wireguard"
+
+    // Trust-all TLS factory for the liveness probe: Reality/ShadowTLS present a
+    // proxied/stolen foreign cert and AnyTLS a self-signed one, so cert-chain
+    // validation must be OFF — we only care that the server completes a real TLS
+    // handshake (proof it's actually speaking TLS, not just accepting SYNs).
+    private val permissiveSsl: javax.net.ssl.SSLSocketFactory by lazy {
+        val tm = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+            override fun checkClientTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+            override fun checkServerTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+        })
+        val sc = javax.net.ssl.SSLContext.getInstance("TLS")
+        sc.init(null, tm, java.security.SecureRandom())
+        sc.socketFactory
+    }
+
+    /** Real reachability probe on a worker thread; stores (ok, latencyMs, ts) in
+     *  healthCache, deduped by tag. A bare TCP connect is a FALSE-green — RKN/TSPU
+     *  SYN-ACK injection and a dead-but-listening port both complete it, so a dead
+     *  endpoint used to always show alive. So:
+     *   • TLS protocols → a full TLS handshake (cert validation off). Completing it
+     *     proves the server speaks TLS; a connect alone doesn't.
+     *   • UDP/QUIC (hy2/tuic/wg) → a datagram + ICMP-unreachable check. UDP can't
+     *     be positively confirmed externally, so we only DISPROVE via an ICMP
+     *     PortUnreachable (= dead); a reply/timeout = reachable-unknown.
+     *   • else (ss/socks/http) → TCP connect (weak; the best we can read).
+     *  NOTE: while the tunnel is UP these probes route THROUGH it, so they answer
+     *  "is the host reachable from the exit", not "from my ISP". The authoritative
+     *  connected-state signal is libbox urltest (CoreStatus.writeGroups /
+     *  OutboundGroupIterator delays) — TODO: wire it like the desktop clash_api
+     *  path so the badge reflects the urltest-selected protocol. */
+    private fun kickPing(tag: String, host: String, port: Int, type: String) {
         if (!pingInFlight.add(tag)) return
         Thread {
             val t0 = System.currentTimeMillis()
-            var ok = false; var lat = 0
+            var ok = false; var lat = -1
             try {
-                java.net.Socket().use { s ->
-                    s.connect(java.net.InetSocketAddress(host, port), 2500)
-                    ok = true; lat = (System.currentTimeMillis() - t0).toInt().coerceAtLeast(1)
+                when {
+                    isUdpType(type) -> java.net.DatagramSocket().use { ds ->
+                        ds.soTimeout = 1500
+                        ds.connect(java.net.InetAddress.getByName(host), port)
+                        ds.send(java.net.DatagramPacket(byteArrayOf(0), 1))
+                        ok = try {
+                            val buf = ByteArray(64)
+                            ds.receive(java.net.DatagramPacket(buf, buf.size)); true   // reply → up
+                        } catch (e: java.net.PortUnreachableException) { false }        // ICMP → dead
+                          catch (e: java.net.SocketTimeoutException) { true }           // no disproof → reachable
+                    }
+                    isTlsType(type) -> java.net.Socket().use { raw ->
+                        raw.connect(java.net.InetSocketAddress(host, port), 2500)
+                        val ssl = permissiveSsl.createSocket(raw, host, port, true) as javax.net.ssl.SSLSocket
+                        ssl.soTimeout = 4000
+                        ssl.startHandshake()                                            // throws if not really TLS
+                        ok = true; lat = (System.currentTimeMillis() - t0).toInt().coerceAtLeast(1)
+                        try { ssl.close() } catch (_: Exception) {}
+                    }
+                    else -> java.net.Socket().use { s ->
+                        s.connect(java.net.InetSocketAddress(host, port), 2500)
+                        ok = true; lat = (System.currentTimeMillis() - t0).toInt().coerceAtLeast(1)
+                    }
                 }
             } catch (_: Exception) { ok = false }
             healthCache[tag] = Triple(ok, lat, System.currentTimeMillis())
@@ -341,34 +393,27 @@ class WebUiBridge(
         "CH" to "Швейцария", "TR" to "Турция", "JP" to "Япония", "SG" to "Сингапур",
         "KZ" to "Казахстан", "AM" to "Армения", "RU" to "Россия")
 
-    /** {endpoints:[{tag, ok, latencyMs, pinging}]} — the bundle card's badges.
-     *  Real per-protocol TCP reachability: pings each endpoint directly (no VPN
-     *  required) so a freshly-added (by-code) server shows live latency instead
-     *  of "no connection". Async + 10s cache — the first call kicks the pings
-     *  and reports `pinging:true`, so the UI shows a spinner until results land
-     *  (~1-2s); subsequent polls return the cached latency. When the tunnel is
-     *  up, `ok` is forced true (urltest keeps a live protocol among them). */
+    /** {endpoints:[{tag, ok, latencyMs, kind, pinging}]} — the bundle card badges.
+     *  REAL per-protocol reachability (TLS handshake / UDP-ICMP / TCP — see
+     *  kickPing), so a dead endpoint shows red instead of a permanent false-green.
+     *  Async + 10s cache — first call kicks the probes and reports `pinging:true`
+     *  (UI spinner) until results land (~1-2s). No more `|| connected` blanket and
+     *  no hard-coded ok=true for hy2/tuic (that was the "dead UDP server always
+     *  pings alive" bug — a TCP probe can't even see a UDP port). `kind` lets the
+     *  UI render udp✓ / tls / tcp distinctly. */
     private fun bundleHealth(): JSONObject {
         val protos = ConfigStore.protocolOutbounds(ctx)
-        val connected = RazbanVpnService.lastStatus == RazbanVpnService.Status.Started
         val now = System.currentTimeMillis()
         val endpoints = JSONArray()
         for ((tag, type, addr) in protos) {
-            // UDP/QUIC protocols (hysteria2/tuic) never answer a TCP connect, so
-            // a TCP probe would always show a misleading "× нет". Report udp-ok
-            // without probing (latency -1 → the UI renders "udp✓").
-            if (type == "hysteria2" || type == "hysteria" || type == "tuic") {
-                endpoints.put(JSONObject().put("tag", tag).put("ok", true)
-                    .put("latencyMs", -1).put("pinging", false))
-                continue
-            }
             val cached = healthCache[tag]
             val fresh = cached != null && (now - cached.third) < 10_000
-            if (!fresh) kickPing(tag, addr.first, addr.second)
-            val lat = cached?.second ?: 0
+            if (!fresh) kickPing(tag, addr.first, addr.second, type)
+            val kind = if (isUdpType(type)) "udp" else if (isTlsType(type)) "tls" else "tcp"
             endpoints.put(JSONObject().put("tag", tag)
-                .put("ok", (cached?.first ?: false) || connected)
-                .put("latencyMs", if (lat > 0) lat else if (connected) 1 else 0)
+                .put("ok", cached?.first ?: false)
+                .put("latencyMs", cached?.second ?: -1)
+                .put("kind", kind)
                 .put("pinging", cached == null))
         }
         return JSONObject().put("endpoints", endpoints)
