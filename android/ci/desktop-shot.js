@@ -12,6 +12,9 @@ const ROUTES = [
   ['stats', '03-stats'],
   ['settings', '04-settings'],
   ['about', '05-about'],
+  // `?notif=demo` seeds the in-app notification cards (update + kill-switch) so
+  // the screenshot captures the NotificationCenter look. The param is preview-only.
+  ['home', '06-notifications', 'notif=demo'],
 ];
 
 (async () => {
@@ -19,9 +22,10 @@ const ROUTES = [
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 });
   page.on('console', m => { if (m.type() === 'error') console.log('[console.error]', m.text().slice(0, 200)); });
-  for (const [r, name] of ROUTES) {
+  for (const [r, name, query] of ROUTES) {
     try {
-      await page.goto('http://127.0.0.1:8137/index.html#/' + r, { waitUntil: 'load', timeout: 20000 });
+      const url = 'http://127.0.0.1:8137/index.html' + (query ? '?' + query : '') + '#/' + r;
+      await page.goto(url, { waitUntil: 'load', timeout: 20000 });
       await page.waitForTimeout(2800); // let fonts + framer settle
       await page.screenshot({ path: `desktop-shots/${name}.png` });
       const txt = (await page.evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 200))) || '';
