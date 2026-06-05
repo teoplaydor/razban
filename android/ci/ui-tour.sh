@@ -152,6 +152,19 @@ if [ "$CDP" = "1" ]; then
 fi
 echo "::endgroup::"
 
+# ── In-app notifications: reload with ?notif=demo so the NotificationCenter seeds
+#    its sample cards (update + kill-switch), then screenshot — proves the cards
+#    render on the phone WebView (Chrome 51) too. ──
+echo "::group::notifications"
+if [ "$CDP" = "1" ]; then
+  ceval "location.replace(location.pathname + '?notif=demo' + (location.hash||'#/home')); 'reload'" >/dev/null
+  sleep 4
+  NOTIF=$(ceval "String(/Доступно обновление|Kill.?switch/i.test(document.body.innerText))")
+  echo "notification cards present: $NOTIF"
+  adb exec-out screencap -p > "$SHOTS/09-notifications.png"
+fi
+echo "::endgroup::"
+
 kill "$LP" 2>/dev/null || true
 echo "shots:"; ls -la "$SHOTS/"
 exit 0
