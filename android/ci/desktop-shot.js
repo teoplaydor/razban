@@ -43,6 +43,7 @@ const ROUTES = [
       const url = 'http://127.0.0.1:8137/index.html' + (query ? '?' + query : '') + '#/' + r;
       await page.goto(url, { waitUntil: 'load', timeout: 20000 });
       await page.waitForTimeout(2800); // let fonts + framer settle
+      if (name === '01-home') { const g3d = await page.evaluate(() => (window).__g3d || '(unset)'); console.log('[globe3d-state] ' + g3d); }
       await page.screenshot({ path: `desktop-shots/${name}.png` });
       const txt = (await page.evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 200))) || '';
       console.log(`shot ${name}: ${txt}`);
