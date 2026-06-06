@@ -26,7 +26,7 @@ const ROUTES = [
            '--ignore-gpu-blocklist', '--enable-webgl', '--disable-gpu-sandbox'],
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 });
-  page.on('console', m => { if (m.type() === 'error') console.log('[console.error]', m.text().slice(0, 200)); });
+  page.on('console', m => { const t = m.text(); if (m.type() === 'error' || t.indexOf('globe3d') >= 0) console.log('[console.' + m.type() + ']', t.slice(0, 240)); });
   // Report WebGL availability + renderer so we know whether the 3D globe (vs the
   // 2D fallback) is what we're screenshotting.
   await page.goto('http://127.0.0.1:8137/index.html#/home', { waitUntil: 'load', timeout: 20000 });
