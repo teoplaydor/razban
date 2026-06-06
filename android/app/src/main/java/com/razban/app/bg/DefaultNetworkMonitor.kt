@@ -67,6 +67,29 @@ object DefaultNetworkMonitor {
         try { cm.registerNetworkCallback(request, cb) } catch (_: Exception) {}
     }
 
+    /** Synchronously find + cache the active PHYSICAL (non-VPN) network that has
+     *  internet. The registerNetworkCallback's onAvailable is delivered async on a
+     *  handler thread, so at the moment the core calls openTun() (synchronously
+     *  inside startOrReloadService) currentNetwork is usually STILL NULL — which
+     *  left the VpnService's underlying network unset → the core's protected
+     *  sockets had nowhere to egress (direct AND proxy → 0 bytes) and LocalResolver
+     *  fell back into the tun (DNS failed). Seeding this before the core starts +
+     *  re-setting it right after establish() removes that race entirely. */
+    fun seed(context: Context): Network? {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        fun usable(n: Network?): Boolean {
+            if (n == null) return false
+            val c = cm.getNetworkCapabilities(n) ?: return false
+            return c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
+                   c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+        val active = cm.activeNetwork
+        val pick = if (usable(active)) active
+                   else try { cm.allNetworks.firstOrNull { usable(it) } } catch (_: Exception) { null }
+        if (pick != null) currentNetwork = pick
+        return pick
+    }
+
     fun stop(context: Context) {
         val cm = context.getSystemService(ConnectivityManager::class.java)
         callback?.let { try { cm?.unregisterNetworkCallback(it) } catch (_: Exception) {} }

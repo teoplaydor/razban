@@ -78,6 +78,12 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         DefaultNetworkMonitor.onNetwork = { net ->
             try { setUnderlyingNetworks(if (net != null) arrayOf(net) else null) } catch (_: Throwable) {}
         }
+        // Seed the underlying network SYNCHRONOUSLY now, before the core runs — the
+        // async ConnectivityManager callback usually hasn't fired by the time the
+        // core calls openTun(), and a null underlying network = 0 egress (direct +
+        // proxy) + DNS into the tun. THIS was "tunnel up but nothing opens" /
+        // "yandex doesn't open".
+        try { DefaultNetworkMonitor.seed(applicationContext) } catch (_: Throwable) {}
         scope.launch {
             try {
                 android.util.Log.d(TAG, "startTunnel: libbox ${Libbox.version()}")
@@ -240,10 +246,13 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
         val pfd = builder.establish() ?: error("VpnService.Builder.establish() returned null")
         tunFd = pfd
-        // Point the VPN at its underlying physical network so protected
-        // outbound sockets route there (not back into the tun).
+        // Point the VPN at its underlying physical network so protected outbound
+        // sockets route there (not back into the tun). Fall back to a synchronous
+        // seed if the async monitor hasn't populated currentNetwork yet — without
+        // this the underlying network stayed null on a fast start → 0 egress.
         try {
-            DefaultNetworkMonitor.currentNetwork?.let { setUnderlyingNetworks(arrayOf(it)) }
+            val net = DefaultNetworkMonitor.currentNetwork ?: DefaultNetworkMonitor.seed(applicationContext)
+            if (net != null) setUnderlyingNetworks(arrayOf(net))
         } catch (_: Throwable) {}
         android.util.Log.d(TAG, "openTun: established fd=${pfd.fd}, underlying=${DefaultNetworkMonitor.currentNetwork}")
         return pfd.fd

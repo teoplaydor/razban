@@ -6,9 +6,10 @@
 # logic lives HERE, in ONE bash process invoked as a single `bash ci/ui-tour.sh`
 # line — where state behaves normally.
 #
-# It: installs the debug app, pre-grants VPN consent so the 1.2s auto-connect
-# goes through silently, screenshots the launch, brings up CDP over the WebView
-# devtools socket, waits for the tunnel to connect, then tours every HashRouter
+# It: installs the debug app, pre-grants VPN consent (appops) so the explicit
+# Connect tap goes through without the system dialog, screenshots the launch,
+# brings up CDP over the WebView devtools socket, TAPS Connect (no auto-connect
+# anymore), waits for the tunnel to connect, then tours every HashRouter
 # route — screenshotting each (adb screencap) and dumping innerText (a blank
 # dump = a crashed/blank React screen). Never hard-fails (exit 0) so the
 # `if: always()` artifact upload always runs.
@@ -63,13 +64,18 @@ echo "::endgroup::"
 
 ceval() { [ "$CDP" = "1" ] && python3 "$CDP_EVAL" "$1" 2>/dev/null | tail -1; }
 
-# ── Wait for the tunnel to reach connected (native auto-connect) ──
+# ── Explicitly TAP Connect, then wait for connected. (There is NO auto-connect
+#    anymore — opening the app must never start the VPN; only the button does.) ──
 echo "::group::connect-poll"
+# Click the power/connect button (same selector the disconnect step uses).
+ceval "(function(){var b=document.querySelector('button[aria-label*=\"одключить\"],button[aria-label*=\"тключить\"]');if(!b)return 'NO_BTN';b.click();return 'TAP_CONNECT';})()"
 CONNECTED=0
 for i in $(seq 1 30); do
   ST=$(ceval "(document.body.innerText.match(/Подключено|Подключение|Отключено|Ошибка/)||['(no-cdp)'])[0]")
   echo "ui-status[$i]: $ST"
   echo "$ST" | grep -q "Подключено" && { CONNECTED=1; break; }
+  # Re-tap once mid-way in case the first tap landed before the bridge was ready.
+  [ "$i" = "5" ] && ceval "(function(){var b=document.querySelector('button[aria-label*=\"одключить\"]');if(b)b.click();return 'retap';})()" >/dev/null
   sleep 2
 done
 echo "CONNECTED=$CONNECTED"
