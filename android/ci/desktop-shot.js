@@ -22,11 +22,22 @@ const ROUTES = [
   // Enable SOFTWARE WebGL so the 3D (three.js) globe actually renders in headless
   // CI (default headless Chromium has no GL → our 2D fallback would show instead).
   const browser = await chromium.launch({
-    args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-           '--ignore-gpu-blocklist', '--enable-webgl', '--enable-accelerated-2d-canvas'],
+    args: ['--use-gl=swiftshader', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+           '--ignore-gpu-blocklist', '--enable-webgl', '--disable-gpu-sandbox'],
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 });
   page.on('console', m => { if (m.type() === 'error') console.log('[console.error]', m.text().slice(0, 200)); });
+  // Report WebGL availability + renderer so we know whether the 3D globe (vs the
+  // 2D fallback) is what we're screenshotting.
+  await page.goto('http://127.0.0.1:8137/index.html#/home', { waitUntil: 'load', timeout: 20000 });
+  const gl = await page.evaluate(() => {
+    try { const c = document.createElement('canvas'); const g = c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!g) return 'NO_WEBGL';
+      const dbg = g.getExtension('WEBGL_debug_renderer_info');
+      return 'WEBGL_OK renderer=' + (dbg ? g.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '?');
+    } catch (e) { return 'WEBGL_ERR ' + e.message; }
+  });
+  console.log('[webgl-probe] ' + gl);
   for (const [r, name, query] of ROUTES) {
     try {
       const url = 'http://127.0.0.1:8137/index.html' + (query ? '?' + query : '') + '#/' + r;
