@@ -19,7 +19,12 @@ const ROUTES = [
 
 (async () => {
   fs.mkdirSync('desktop-shots', { recursive: true });
-  const browser = await chromium.launch();
+  // Enable SOFTWARE WebGL so the 3D (three.js) globe actually renders in headless
+  // CI (default headless Chromium has no GL → our 2D fallback would show instead).
+  const browser = await chromium.launch({
+    args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+           '--ignore-gpu-blocklist', '--enable-webgl', '--enable-accelerated-2d-canvas'],
+  });
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 }, deviceScaleFactor: 1 });
   page.on('console', m => { if (m.type() === 'error') console.log('[console.error]', m.text().slice(0, 200)); });
   for (const [r, name, query] of ROUTES) {
