@@ -1,8 +1,8 @@
 {
-  "latestVersion": "0.1.22",
-  "releaseDate": "2026-06-05",
+  "latestVersion": "0.1.23",
+  "releaseDate": "2026-06-06",
   "mandatory": false,
-  "notes": "Глобус-линиями: вращение пальцем, флаги и подсветка стран входа/выхода, влёт-зум при подключении с кропом до двух стран. Честная проверка серверов + внутренние уведомления.",
+  "notes": "Настоящая 3D-планета (WebGL) с континентами, зданиями и кинематографичным влётом камеры. Приложение больше не подключается само при открытии — только по кнопке. Исправлено открытие Яндекса и .ru сайтов.",
   "windows": {
     "version": "0.1.18",
     "portable": {
@@ -13,9 +13,9 @@
   },
   "android": {
     "available": true,
-    "version": "0.1.22",
-    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.22/Razban-0.1.22.apk",
-    "size": 124681545,
-    "sha256": "9daebbe69beea8ea87ab0e95806c8ab4ffab9c79595cfdecd0d94880e14839d2"
+    "version": "0.1.23",
+    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.23/Razban-0.1.23.apk",
+    "size": 124801569,
+    "sha256": "a941cc18a900f74bb3fc10e5ec041fe9d584ee06a7e70d516eb5f1003d6508a0"
   }
 }

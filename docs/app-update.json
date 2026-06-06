@@ -1,9 +1,9 @@
 {
-  "versionCode": 23,
-  "versionName": "0.1.22",
-  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.22/Razban-0.1.22.apk",
-  "size": 124681545,
-  "sha256": "9daebbe69beea8ea87ab0e95806c8ab4ffab9c79595cfdecd0d94880e14839d2",
+  "versionCode": 24,
+  "versionName": "0.1.23",
+  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.23/Razban-0.1.23.apk",
+  "size": 124801569,
+  "sha256": "a941cc18a900f74bb3fc10e5ec041fe9d584ee06a7e70d516eb5f1003d6508a0",
   "mandatory": false,
-  "notes": "Глобус-линиями: вращайте Землю пальцем, подсветка стран входа/выхода с флагами, при подключении — влёт в точку и приближение к двум странам. Честная проверка серверов и уведомления (kill-switch/обновления)."
+  "notes": "🌍 Настоящая 3D-планета (WebGL): объёмная Земля с континентами, здания и достопримечательности при приближении, кинематографичный влёт камеры при подключении. ⚠ Приложение больше НЕ подключается само при открытии — только по кнопке. Исправлено: Яндекс и сайты .ru снова открываются (был баг с нулевым egress)."
 }
