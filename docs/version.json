@@ -13,9 +13,9 @@
   },
   "android": {
     "available": true,
-    "version": "0.1.23",
-    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.23/Razban-0.1.23.apk",
-    "size": 124801569,
-    "sha256": "a941cc18a900f74bb3fc10e5ec041fe9d584ee06a7e70d516eb5f1003d6508a0"
+    "version": "0.1.24",
+    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.24/Razban-0.1.24.apk",
+    "size": 124945941,
+    "sha256": "30afee054a5b591c7dad8db35729f0690c6d43cdd09ea4579bc9b17ab90de3de"
   }
 }
