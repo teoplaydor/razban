@@ -226,8 +226,26 @@ object ConfigStore {
             val ds = r.optJSONArray("domain_suffix") ?: continue
             for (j in 0 until ds.length()) if (ds.optString(j) == ".ru") return
         }
-        val ruRule = routeRule("domain_suffix",
-            JSONArray(listOf(".ru", ".su", ".xn--p1ai")), "direct") ?: return
+        // RU ccTLDs + the RU-service CDNs/assets that live on FOREIGN TLDs.
+        // adaptForAndroid strips the geosite rule_sets that cover these on desktop,
+        // and they aren't .ru, so without this they fall through to final:proxy and
+        // TUNNEL through the exit → Yandex/VK/Mail.ru geo-fence or stall (yandex.ru
+        // HTML loads direct but its yastatic.net assets tunnelled = broken page).
+        // Spliced HIGH (before the dpi-bypass/proxy rules) so they win — and since
+        // dpi folds to the tunnel on Android, forcing these direct also rescues RU
+        // services the desktop marked dpi (vk.com/mail.ru) from tunnelling here.
+        val ruDirect = listOf(
+            ".ru", ".su", ".xn--p1ai",
+            // Yandex assets/CDN (foreign TLD — not caught by .ru):
+            "yastatic.net", "yandex.net", "yandexcloud.net", "yastat.net",
+            // VK family:
+            "vk.com", "vk.me", "vkuser.net", "vk-cdn.net", "vkuservideo.net",
+            "userapi.com", "mycdn.me",
+            // Mail.ru / marketplaces / maps / banks:
+            "my.com", "mradx.net", "avito.st", "wbstatic.net",
+            "ozonusercontent.com", "2gis.com", "sber.ru"
+        )
+        val ruRule = routeRule("domain_suffix", JSONArray(ruDirect), "direct") ?: return
         // splice after the leading action rules (sniff / hijack-dns / anti-loop)
         val merged = JSONArray()
         var injected = false
