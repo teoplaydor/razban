@@ -4,11 +4,11 @@
   "mandatory": false,
   "notes": "Настоящая 3D-планета (WebGL) с континентами, зданиями и кинематографичным влётом камеры. Приложение больше не подключается само при открытии — только по кнопке. Исправлено открытие Яндекса и .ru сайтов.",
   "windows": {
-    "version": "0.1.18",
+    "version": "0.1.23",
     "portable": {
-      "url": "https://github.com/teoplaydor/razban/releases/download/desktop-v0.1.18/Razban-portable-0.1.18.zip",
-      "size": 352766037,
-      "sha256": "c3fde5a9080f8e27b7516443f4e454bc8f4c9bfe33772bdd8bb0d3e3265caf498"
+      "url": "https://github.com/teoplaydor/razban/releases/download/desktop-v0.1.23/Razban-portable-0.1.23.zip",
+      "size": 352904137,
+      "sha256": "c924adac9b77c5f316ac8e7d607dd86eebb04d45f2799880c0e9adad144a4aa9"
     }
   },
   "android": {
