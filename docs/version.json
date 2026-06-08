@@ -1,5 +1,5 @@
 {
-  "latestVersion": "0.1.26",
+  "latestVersion": "0.1.27",
   "releaseDate": "2026-06-06",
   "mandatory": false,
   "notes": "Настоящая 3D-планета (WebGL) с континентами, зданиями и кинематографичным влётом камеры. Приложение больше не подключается само при открытии — только по кнопке. Исправлено открытие Яндекса и .ru сайтов.",
@@ -13,9 +13,9 @@
   },
   "android": {
     "available": true,
-    "version": "0.1.26",
-    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.26/Razban-0.1.26.apk",
-    "size": 124964753,
-    "sha256": "47f014155bed5856ba100606cb16f20d905cf9313b45b9828eb4a809f69df6a7"
+    "version": "0.1.27",
+    "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.27/Razban-0.1.27.apk",
+    "size": 124964933,
+    "sha256": "69f0ea6c77d8730cd41bcbd49e47ad26d7dbc814f16403b5611dd2d1b57d04c4"
   }
 }
