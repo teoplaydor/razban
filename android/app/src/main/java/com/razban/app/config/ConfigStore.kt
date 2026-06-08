@@ -199,6 +199,12 @@ object ConfigStore {
         // vanished → "default domain resolver not found").
         adaptDns(root)
 
+        // 🔴 Make RU domains RESOLVE on the real RU NIC (not via the tunnel). Without
+        // this, dns.final=dns-proxy resolves yandex.ru from Helsinki → EU geo-IPs →
+        // broken page. This is the actual "yandex.ru doesn't open" fix; ensureRuDirect
+        // (below) only fixes egress, not resolution.
+        ensureRuDirectDns(root)
+
         // Exact `domain` rules leak subdomains (e.g. cdn.discordapp.com wouldn't
         // match a "domain":["discordapp.com"] entry). Desktop ConfigBuilder emits
         // domain_suffix everywhere (inv #24); normalize here so a bundled/imported
@@ -213,8 +219,26 @@ object ConfigStore {
         // (injectUserRoutes) still splice ABOVE this, so an explicit override wins.
         ensureRuDirect(root)
 
-        return root.toString(2)
+        // Compact (not toString(2)) — the core ignores indentation, and pretty-printing
+        // a 1000+-rule config on every connect is pure CPU waste on the hot path.
+        return root.toString()
     }
+
+    // RU ccTLDs + the RU-service CDNs/assets that live on FOREIGN TLDs. adaptForAndroid
+    // strips the geosite rule_sets that cover these on desktop, and they aren't .ru, so
+    // without this they tunnel → Yandex/VK/Mail.ru geo-fence or stall. Shared by the
+    // ROUTE splice (egress direct) AND the DNS splice (resolve on the real RU NIC).
+    private val ruDirectSuffixes = listOf(
+        ".ru", ".su", ".xn--p1ai",
+        // Yandex assets/CDN (foreign TLD — not caught by .ru):
+        "yastatic.net", "yandex.net", "yandexcloud.net", "yastat.net",
+        // VK family:
+        "vk.com", "vk.me", "vkuser.net", "vk-cdn.net", "vkuservideo.net",
+        "userapi.com", "mycdn.me",
+        // Mail.ru / marketplaces / maps / banks:
+        "my.com", "mradx.net", "avito.st", "wbstatic.net",
+        "ozonusercontent.com", "2gis.com", "sber.ru"
+    )
 
     private fun ensureRuDirect(root: JSONObject) {
         val route = root.optJSONObject("route") ?: return
@@ -226,26 +250,11 @@ object ConfigStore {
             val ds = r.optJSONArray("domain_suffix") ?: continue
             for (j in 0 until ds.length()) if (ds.optString(j) == ".ru") return
         }
-        // RU ccTLDs + the RU-service CDNs/assets that live on FOREIGN TLDs.
-        // adaptForAndroid strips the geosite rule_sets that cover these on desktop,
-        // and they aren't .ru, so without this they fall through to final:proxy and
-        // TUNNEL through the exit → Yandex/VK/Mail.ru geo-fence or stall (yandex.ru
-        // HTML loads direct but its yastatic.net assets tunnelled = broken page).
-        // Spliced HIGH (before the dpi-bypass/proxy rules) so they win — and since
-        // dpi folds to the tunnel on Android, forcing these direct also rescues RU
-        // services the desktop marked dpi (vk.com/mail.ru) from tunnelling here.
-        val ruDirect = listOf(
-            ".ru", ".su", ".xn--p1ai",
-            // Yandex assets/CDN (foreign TLD — not caught by .ru):
-            "yastatic.net", "yandex.net", "yandexcloud.net", "yastat.net",
-            // VK family:
-            "vk.com", "vk.me", "vkuser.net", "vk-cdn.net", "vkuservideo.net",
-            "userapi.com", "mycdn.me",
-            // Mail.ru / marketplaces / maps / banks:
-            "my.com", "mradx.net", "avito.st", "wbstatic.net",
-            "ozonusercontent.com", "2gis.com", "sber.ru"
-        )
-        val ruRule = routeRule("domain_suffix", JSONArray(ruDirect), "direct") ?: return
+        // RU domains must EGRESS direct (a foreign exit geo-fences them). The sibling
+        // ensureRuDirectDns makes them RESOLVE direct too — without BOTH, yandex.ru's
+        // A-record is fetched via the tunnel and Yandex geo-DNS returns EU IPs = broken.
+        // Spliced HIGH (before dpi-bypass/proxy) so it wins; user pins still go above.
+        val ruRule = routeRule("domain_suffix", JSONArray(ruDirectSuffixes), "direct") ?: return
         // splice after the leading action rules (sniff / hijack-dns / anti-loop)
         val merged = JSONArray()
         var injected = false
@@ -257,6 +266,49 @@ object ConfigStore {
         }
         if (!injected) merged.put(ruRule)
         route.put("rules", merged)
+    }
+
+    /** 🔴 THE real "yandex.ru doesn't open" fix. The desktop's direct-DNS classifier
+     *  is stripped on Android, so dns.final = dns-proxy (detour:proxy) → EVERY DNS
+     *  query, incl. yandex.ru, is resolved FROM THE HELSINKI EXIT. Yandex/CDN geo-DNS
+     *  then hands back EU edge IPs → the .ru page loads broken even though its TCP
+     *  egress is direct (ensureRuDirect). Fix: a dedicated direct DNS server — Yandex
+     *  77.88.8.8 (survives RU DPI + is RU-geo-correct), detour:"direct" so its own
+     *  query egresses on the real RU NIC — plus a dns rule routing the RU suffixes to
+     *  it. Foreign/blocked domains keep resolving via the tunnel (dns.final stays
+     *  dns-proxy) to dodge RU DNS poisoning of blocked names. Idempotent. */
+    private fun ensureRuDirectDns(root: JSONObject) {
+        val dns = root.optJSONObject("dns") ?: return
+        // The `direct` outbound must be NON-empty for a DNS server to detour to it —
+        // sing-box FATALs at RUN on `detour:"direct"` to a bare {type:direct} ("empty
+        // direct outbound makes no sense", inv #17.1). udp_fragment:false is a non-
+        // default dial field that makes the struct non-zero (a true no-op otherwise).
+        root.optJSONArray("outbounds")?.let { outs ->
+            for (i in 0 until outs.length()) {
+                val o = outs.optJSONObject(i) ?: continue
+                if (o.optString("type") == "direct" && o.optString("tag") == "direct" && !o.has("udp_fragment"))
+                    o.put("udp_fragment", false)
+            }
+        }
+        val servers = dns.optJSONArray("servers") ?: JSONArray().also { dns.put("servers", it) }
+        var hasRu = false
+        for (i in 0 until servers.length())
+            if (servers.optJSONObject(i)?.optString("tag") == "dns-ru") { hasRu = true; break }
+        if (!hasRu) {
+            servers.put(JSONObject()
+                .put("tag", "dns-ru").put("type", "udp")
+                .put("server", "77.88.8.8").put("detour", "direct"))
+            dns.put("servers", servers)
+        }
+        val rules = dns.optJSONArray("rules") ?: JSONArray()
+        for (i in 0 until rules.length())
+            if (rules.optJSONObject(i)?.optString("server") == "dns-ru") return   // already spliced
+        val ruDnsRule = JSONObject()
+            .put("domain_suffix", JSONArray(ruDirectSuffixes))
+            .put("server", "dns-ru")
+        val merged = JSONArray().put(ruDnsRule)   // prepend so RU resolution wins
+        for (i in 0 until rules.length()) merged.put(rules.get(i))
+        dns.put("rules", merged)
     }
 
     private fun normalizeExactDomains(root: JSONObject) {
@@ -355,7 +407,7 @@ object ConfigStore {
             route.put("rules", merged)
             android.util.Log.d("razban-config",
                 "injectUserRoutes: layered ${userRules.length()} user route rule(s) (tunnel=$tunnel)")
-            root.toString(2)
+            root.toString()   // compact — no pretty-print on the hot connect path
         } catch (_: Exception) { json }
     }
 
