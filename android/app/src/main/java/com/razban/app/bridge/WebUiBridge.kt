@@ -467,7 +467,9 @@ class WebUiBridge(
      *  ConfigStore.injectUserRoutes emits as a `package_name` route rule. Skips
      *  self; dedups multi-activity packages. (Icons omitted — name+package is
      *  enough to pick; base64-ing every icon would bloat the payload.) */
+    @Volatile private var installedCache: JSONArray? = null
     private fun installedAppsJson(): JSONArray {
+        installedCache?.let { return it }   // installed list rarely changes — build once (icons are pricey)
         val pm = ctx.packageManager
         val arr = JSONArray()
         try {
@@ -480,15 +482,35 @@ class WebUiBridge(
                 val label = try { ri.loadLabel(pm)?.toString() } catch (_: Exception) { null } ?: pkg
                 // Field names MUST match the React AppEntry shape (executableName is
                 // what the Apps tab reads + writes into the *Apps buckets, which
-                // ConfigStore.injectUserRoutes emits as package_name rules).
+                // ConfigStore.injectUserRoutes emits as package_name rules). `icon` is
+                // a small base64 PNG so the picker is recognizable at a glance.
                 arr.put(JSONObject()
                     .put("name", label)
                     .put("executableName", pkg)
                     .put("isRunning", false)
-                    .put("pid", 0))
+                    .put("pid", 0)
+                    .put("icon", try { iconDataUri(ri.loadIcon(pm)) } catch (_: Exception) { "" }))
             }
         } catch (_: Exception) {}
+        installedCache = arr
         return arr
+    }
+
+    /** App icon → a small base64 PNG data URI (downscaled to 40px), so ~50 icons
+     *  stay a few hundred KB total — acceptable for the cached one-time build, and
+     *  makes the picker recognizable instead of 2-letter initials. */
+    private fun iconDataUri(d: android.graphics.drawable.Drawable?): String {
+        if (d == null) return ""
+        return try {
+            val sz = 40
+            val bmp = android.graphics.Bitmap.createBitmap(sz, sz, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(bmp)
+            d.setBounds(0, 0, sz, sz); d.draw(c)
+            val bos = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bos)
+            bmp.recycle()
+            "data:image/png;base64," + android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP)
+        } catch (_: Exception) { "" }
     }
 
     private fun readClipboard(): String {
