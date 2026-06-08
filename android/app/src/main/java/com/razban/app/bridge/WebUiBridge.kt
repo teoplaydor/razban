@@ -96,6 +96,10 @@ class WebUiBridge(
         // bundle's protocols are reachable (sing-box's urltest is actively
         // picking among them). Shows "N of N доступно" instead of "0 of N".
         "bundles.health" -> bundleHealth()
+        // Real entry-point geo (the user's OWN public IP→country), fetched on the
+        // underlying NOT_VPN network so it isn't masked by the tunnel — replaces the
+        // browser-timezone guess that showed e.g. Hong Kong instead of Moscow.
+        "geo.entry" -> entryGeoJson()
         // Selecting the bundle: on Android there's a single bundle = the active
         // config, and sing-box auto-rotates protocols via urltest. Acknowledge.
         "servers.setActive", "bundles.setActive" -> true
@@ -392,6 +396,36 @@ class WebUiBridge(
         "PL" to "Польша", "EE" to "Эстония", "LT" to "Литва", "NO" to "Норвегия",
         "CH" to "Швейцария", "TR" to "Турция", "JP" to "Япония", "SG" to "Сингапур",
         "KZ" to "Казахстан", "AM" to "Армения", "RU" to "Россия")
+
+    // Real entry-point geolocation. The globe's "вход" was derived from the browser
+    // timezone (Intl) → garbage (Hong Kong for a Moscow user). Resolve the user's
+    // ACTUAL public IP→country via ipinfo.io, bound to the underlying NOT_VPN network
+    // (DefaultNetworkMonitor.currentNetwork) so a live tunnel doesn't mask it as the
+    // exit. Cached for the session; the @JavascriptInterface bridge already runs off
+    // the UI thread (code.redeem blocks here too), so a short blocking fetch is safe.
+    @Volatile private var entryGeo: JSONObject? = null
+    private fun entryGeoJson(): JSONObject {
+        entryGeo?.let { return it }
+        return try {
+            val net = com.razban.app.bg.DefaultNetworkMonitor.currentNetwork
+            val url = java.net.URL("https://ipinfo.io/json")
+            val conn = (net?.openConnection(url) ?: url.openConnection()) as java.net.HttpURLConnection
+            conn.connectTimeout = 4000; conn.readTimeout = 4000
+            conn.setRequestProperty("Accept", "application/json")
+            val j = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            val cc = j.optString("country")
+            val loc = j.optString("loc").split(",")
+            val out = JSONObject().put("cc", cc).put("name", ccNames[cc] ?: cc)
+                .put("city", j.optString("city"))
+            loc.getOrNull(0)?.toDoubleOrNull()?.let { la -> loc.getOrNull(1)?.toDoubleOrNull()?.let { lo ->
+                out.put("lat", la).put("lon", lo) } }
+            if (cc.isNotEmpty()) entryGeo = out   // cache only a real answer
+            android.util.Log.i("razban-geo", "entry geo → $cc (${j.optString("city")})")
+            out
+        } catch (e: Exception) {
+            JSONObject().put("cc", "").put("error", e.message ?: "fetch failed")
+        }
+    }
 
     /** {endpoints:[{tag, ok, latencyMs, kind, pinging}]} — the bundle card badges.
      *  REAL per-protocol reachability (TLS handshake / UDP-ICMP / TCP — see
