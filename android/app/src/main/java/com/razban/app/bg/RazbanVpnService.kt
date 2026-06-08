@@ -123,6 +123,11 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 // Runtime domain classifier: GeoIP-pins observed RU services to
                 // direct (safe — see GeoClassifier). Applies via reload (hot).
                 GeoClassifier.start(applicationContext) { reload() }
+                // Pre-warm the sing-box DNS cache for common RU/news/video/AI hosts so
+                // the user's FIRST navigation skips the cold-DNS RTT (the "кэширование
+                // интернета" ask). Fire-and-forget AFTER Started — never blocks connect.
+                // Resolution rides the just-up TUN → sing-box resolves + caches each.
+                prewarmDns()
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "startTunnel FAILED", t)
                 writeDebugMessage("start failed: ${t.message}")
@@ -178,6 +183,23 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     private fun broadcastStatus() {
         sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName)
             .putExtra(EXTRA_STATUS, status.name))
+    }
+
+    /** Pre-resolve common RU/news/video/AI hosts right after Connect so the user's
+     *  first navigation skips the cold-DNS round-trip. Resolution rides the just-up
+     *  TUN → sing-box resolves each (RU via dns-ru direct, foreign via dns-proxy) and
+     *  caches it. Fire-and-forget on a daemon thread — never touches the connect path. */
+    private fun prewarmDns() {
+        Thread {
+            val hosts = listOf(
+                "yandex.ru", "ya.ru", "mail.ru", "vk.com", "dzen.ru", "gosuslugi.ru",
+                "sberbank.ru", "online.sberbank.ru", "ok.ru", "avito.ru", "wildberries.ru",
+                "ozon.ru", "rbc.ru", "lenta.ru", "ria.ru", "www.youtube.com",
+                "rr1.googlevideo.com", "i.ytimg.com", "www.google.com", "github.com",
+                "claude.ai", "chatgpt.com")
+            for (h in hosts) try { java.net.InetAddress.getAllByName(h) } catch (_: Exception) {}
+            android.util.Log.i(TAG, "dns prewarm done (${hosts.size} hosts)")
+        }.apply { isDaemon = true; start() }
     }
 
     // ──────────────────── PlatformInterface ─────────────────────

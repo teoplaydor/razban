@@ -235,9 +235,14 @@ object ConfigStore {
         // VK family:
         "vk.com", "vk.me", "vkuser.net", "vk-cdn.net", "vkuservideo.net",
         "userapi.com", "mycdn.me",
-        // Mail.ru / marketplaces / maps / banks:
+        // Mail.ru / marketplaces / maps:
         "my.com", "mradx.net", "avito.st", "wbstatic.net",
-        "ozonusercontent.com", "2gis.com", "sber.ru"
+        "ozonusercontent.com", "2gis.com", "sber.ru",
+        // RU banks — login flows hit non-.ru auth/CDN domains that otherwise tunnel →
+        // the bank geo-fences the foreign exit (or the RU-Trusted-CA OCSP fetch tunnels
+        // and fails) → login dies (the "в Сбербанк не смог войти" bug). The .ru bank
+        // domains are already covered by ".ru"; these are the foreign-TLD ones.
+        "sberbank.com", "sber.com", "sberdevices.com", "tbank.com", "vtb.com", "gazprombank.com"
     )
 
     private fun ensureRuDirect(root: JSONObject) {
@@ -290,6 +295,10 @@ object ConfigStore {
                     o.put("udp_fragment", false)
             }
         }
+        // independent_cache — isolate the per-server DNS caches (dns-ru / dns-proxy /
+        // dns-direct) so a name cached under one server isn't served from another's
+        // path. Desktop sets this; Android didn't. Faster repeat lookups, zero risk.
+        if (!dns.has("independent_cache")) dns.put("independent_cache", true)
         val servers = dns.optJSONArray("servers") ?: JSONArray().also { dns.put("servers", it) }
         var hasRu = false
         for (i in 0 until servers.length())
