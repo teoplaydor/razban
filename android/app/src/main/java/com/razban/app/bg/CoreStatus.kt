@@ -38,6 +38,7 @@ object CoreStatus : CommandClientHandler {
     @Volatile var uplinkTotal = 0L;      private set
     @Volatile var downlinkTotal = 0L;    private set
     @Volatile var memory = 0L;           private set
+    @Volatile var pingMs = -1;           private set   // live RTT to exit (urltest delay), ms; -1 = unknown
 
     // ── per-connection state, keyed by libbox connection id ──
     private class Conn(
@@ -71,6 +72,9 @@ object CoreStatus : CommandClientHandler {
                         // event hook server-side → turns ON traffic accounting and
                         // streams per-connection deltas.
                         addCommand(Libbox.CommandConnections)
+                        // Subscribe to outbound groups → libbox pushes urltest delays
+                        // (the live RTT to the selected exit) on its own schedule.
+                        addCommand(Libbox.CommandGroup)
                         statusInterval = 1_000_000_000L   // Go time.Duration → 1s
                     }
                     val c = Libbox.newCommandClient(this@CoreStatus, opts)
@@ -103,6 +107,7 @@ object CoreStatus : CommandClientHandler {
         .put("connected", connectedState)
         .put("uploadBytes", uplinkTotal).put("downloadBytes", downlinkTotal)
         .put("uploadSpeed", uplink).put("downloadSpeed", downlink)
+        .put("latencyMs", if (connectedState) pingMs else -1)
 
     /** {hosts:[{host,upBps,downBps}], processes:[{process,upBps,downBps}]} */
     fun throughputJson(): JSONObject {
@@ -212,7 +217,26 @@ object CoreStatus : CommandClientHandler {
     override fun setDefaultLogLevel(level: Int) {}
     override fun clearLogs() {}
     override fun writeLogs(messageList: LogIterator) {}
-    override fun writeGroups(message: OutboundGroupIterator) {}
+    override fun writeGroups(message: OutboundGroupIterator) {
+        // Read the live urltest RTT of each group's SELECTED outbound — libbox has
+        // already measured it internally for the auto-selector, so this is free.
+        try {
+            var best = -1
+            while (message.hasNext()) {
+                val g = message.next()
+                val sel = g.selected
+                val items = g.items
+                while (items.hasNext()) {
+                    val item = items.next()
+                    if (item.tag == sel) {
+                        val d = item.urlTestDelay   // ms; 0 = not yet tested
+                        if (d > 0 && (best < 0 || d < best)) best = d
+                    }
+                }
+            }
+            if (best >= 0) pingMs = best
+        } catch (_: Exception) { /* libbox shape variance — keep last good */ }
+    }
     override fun initializeClashMode(modeList: StringIterator, currentMode: String) {}
     override fun updateClashMode(newMode: String) {}
 
