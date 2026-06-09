@@ -242,7 +242,33 @@ object ConfigStore {
         // the bank geo-fences the foreign exit (or the RU-Trusted-CA OCSP fetch tunnels
         // and fails) → login dies (the "в Сбербанк не смог войти" bug). The .ru bank
         // domains are already covered by ".ru"; these are the foreign-TLD ones.
-        "sberbank.com", "sber.com", "sberdevices.com", "tbank.com", "vtb.com", "gazprombank.com"
+        "sberbank.com", "sber.com", "sberdevices.com", "tbank.com", "vtb.com", "gazprombank.com",
+        // 🔴 DoH/DoT resolver endpoints → MUST egress direct. Yandex Browser (and any
+        // Chromium) does its OWN encrypted DNS (DoH/DoQ), bypassing our dns-ru splice.
+        // A public DoH resolver is ANYCAST: if its endpoint tunnels, the browser hits the
+        // Helsinki PoP → RU sites resolve to EU IPs → geo-fenced (only google.com, being
+        // region-agnostic anycast, survives — the exact "только google.com работает" bug).
+        // Routed direct, the browser's DoH hits the nearest (Moscow) PoP → RU-correct IPs.
+        // DoH is encrypted so RU DPI can't poison it; foreign blocked sites still tunnel by
+        // SNI/route.final. Covers the browser-DoH layer the system dns-ru can't reach.
+        "cloudflare-dns.com", "mozilla.cloudflare-dns.com", "chrome.cloudflare-dns.com",
+        "security.cloudflare-dns.com", "family.cloudflare-dns.com", "one.one.one.one",
+        "dns.google", "dns64.dns.google", "dns.quad9.net", "doh.opendns.com",
+        "dns.adguard.com", "dns.adguard-dns.com", "common.dot.dns.yandex.net",
+        "dns.yandex.ru", "secure.dns.yandex.ru"
+    )
+
+    /** Public DoH/DoT resolver IPs — the browser may use DoH/DoT BY IP (no domain to
+     *  sniff), so a domain_suffix rule can't catch it. Pin these direct via ip_cidr so
+     *  the encrypted query egresses on the real RU NIC → anycast resolves from Moscow →
+     *  RU-correct answers. (1.1.1.1 is also dns-proxy's DoT target via detour:proxy — that
+     *  is a server-level dial, unaffected by route.rules, so no conflict.) */
+    private val dohDirectIps = listOf(
+        "1.1.1.1/32", "1.0.0.1/32", "8.8.8.8/32", "8.8.4.4/32",
+        "9.9.9.9/32", "9.9.9.10/32", "149.112.112.112/32",
+        "94.140.14.14/32", "94.140.15.15/32",
+        "208.67.222.222/32", "208.67.220.220/32",
+        "77.88.8.8/32", "77.88.8.1/32"
     )
 
     private fun ensureRuDirect(root: JSONObject) {
@@ -260,16 +286,23 @@ object ConfigStore {
         // A-record is fetched via the tunnel and Yandex geo-DNS returns EU IPs = broken.
         // Spliced HIGH (before dpi-bypass/proxy) so it wins; user pins still go above.
         val ruRule = routeRule("domain_suffix", JSONArray(ruDirectSuffixes), "direct") ?: return
+        // DoH/DoT-by-IP can't be matched by domain (no name to sniff) — pin the public
+        // resolver IPs direct so the browser's encrypted DNS egresses on the RU NIC.
+        val ipRule = routeRule("ip_cidr", JSONArray(dohDirectIps), "direct")
         // splice after the leading action rules (sniff / hijack-dns / anti-loop)
         val merged = JSONArray()
         var injected = false
         for (i in 0 until rules.length()) {
             val r = rules.optJSONObject(i)
             val isAction = r != null && (r.has("action") || r.optString("protocol").isNotEmpty())
-            if (!injected && !isAction) { merged.put(ruRule); injected = true }
+            if (!injected && !isAction) {
+                merged.put(ruRule)
+                if (ipRule != null) merged.put(ipRule)
+                injected = true
+            }
             merged.put(rules.get(i))
         }
-        if (!injected) merged.put(ruRule)
+        if (!injected) { merged.put(ruRule); if (ipRule != null) merged.put(ipRule) }
         route.put("rules", merged)
     }
 
