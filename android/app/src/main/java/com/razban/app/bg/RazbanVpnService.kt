@@ -128,6 +128,19 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 // интернета" ask). Fire-and-forget AFTER Started — never blocks connect.
                 // Resolution rides the just-up TUN → sing-box resolves + caches each.
                 prewarmDns()
+                // On-device diagnostic: probe each layer (underlying net, Android
+                // Private DNS, direct egress to a RU IP, what yandex.ru resolves to)
+                // and cache a verdict for the UI/logs. Evidence over theory for the
+                // recurring "RU direct doesn't work" reports. Fire-and-forget.
+                Thread {
+                    try {
+                        val rep = Diagnostics.run(applicationContext, this@RazbanVpnService,
+                            DefaultNetworkMonitor.currentNetwork)
+                        val verdict = rep.optString("verdict")
+                        if (verdict.isNotEmpty() && !verdict.startsWith("OK"))
+                            writeDebugMessage("⚠ Диагностика: $verdict")
+                    } catch (_: Throwable) {}
+                }.apply { isDaemon = true; start() }
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "startTunnel FAILED", t)
                 writeDebugMessage("start failed: ${t.message}")

@@ -80,6 +80,10 @@ class WebUiBridge(
         "vpn.applyPendingRouteChanges" -> true
         "vpn.dropConnections" -> JSONObject().put("dropped", 0)
         "traffic.throughput" -> com.razban.app.bg.CoreStatus.throughputJson()
+        // On-device connectivity diagnostic (underlying net / Private DNS / direct
+        // egress to a RU IP / what yandex.ru resolves to). Cached at Connect.
+        "diag.last" -> com.razban.app.bg.Diagnostics.last
+            ?: JSONObject().put("verdict", "диагностика ещё не запускалась — подключитесь")
 
         "settings.get" -> settingsJson()
         "settings.set" -> { saveSettings(params); true }
