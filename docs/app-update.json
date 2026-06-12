@@ -1,9 +1,9 @@
 {
-  "versionCode": 35,
-  "versionName": "0.1.34",
-  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.34/Razban-0.1.34.apk",
-  "size": 124965653,
-  "sha256": "6d99e8a50972f13875b9771ea0cd25d8b8119950f4098308a9e3c4c0902c7480",
+  "versionCode": 36,
+  "versionName": "0.1.35",
+  "url": "https://github.com/teoplaydor/razban/releases/download/android-public-v0.1.35/Razban-0.1.35.apk",
+  "size": 124965657,
+  "sha256": "3b7528e7502f928d6895928a3444813c285fbf1e4b16c02d55b8e719d43e9c17",
   "mandatory": false,
   "notes": "Исправлен вход в банки (Сбербанк, Т-Банк, ВТБ и др.) — их домены входа уходили в туннель и попадали под гео-фенс банка, теперь идут напрямую. Плюс ускорение: кэш DNS и прогрев частых сайтов при подключении — первая загрузка быстрее."
 }
