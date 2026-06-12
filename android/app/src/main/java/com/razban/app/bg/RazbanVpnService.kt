@@ -134,6 +134,10 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 // recurring "RU direct doesn't work" reports. Fire-and-forget.
                 Thread {
                     try {
+                        // Let the underlying network bind + the tunnel settle first,
+                        // so the probe doesn't false-alarm "no underlying network" on
+                        // a cold start where seed() hasn't picked the net yet.
+                        Thread.sleep(2500)
                         val rep = Diagnostics.run(applicationContext, this@RazbanVpnService,
                             DefaultNetworkMonitor.currentNetwork)
                         val verdict = rep.optString("verdict")

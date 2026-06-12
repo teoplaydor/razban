@@ -38,12 +38,36 @@ object Diagnostics {
     // Stable Yandex RU front IPs (yandex.ru / ya.ru) for a direct-egress probe and
     // for the "did yandex resolve to a Russian IP" check. AS13238 Yandex blocks.
     private val RU_PROBE_IPS = listOf("77.88.55.88", "5.255.255.77", "87.250.250.242")
-    private val RU_PREFIXES = listOf(
-        "5.255.", "77.88.", "87.250.2", "93.158.", "95.108.1", "100.43.",
-        "178.154.", "213.180.19", "5.45.", "37.140.", "84.201.", "178.248."
-    )
 
-    private fun isRuIp(ip: String): Boolean = RU_PREFIXES.any { ip.startsWith(it) }
+    // Well-known Yandex (AS13238) RU ranges — CIDR-EXACT (string prefixes were
+    // over-broad and could falsely report "yandex → RU, OK", masking the very DNS
+    // tunneling this tool exists to detect). All three RU_PROBE_IPS fall inside.
+    private val RU_CIDRS = listOf(
+        "5.45.192.0/18", "5.255.192.0/18", "37.9.64.0/18", "37.140.128.0/18",
+        "77.88.0.0/18", "84.201.128.0/17", "87.250.224.0/19", "93.158.0.0/16",
+        "95.108.128.0/17", "100.43.64.0/19", "141.8.128.0/18", "178.154.128.0/17",
+        "199.21.96.0/22", "213.180.192.0/19"
+    ).map(::parseCidr)
+
+    private fun ipToLong(ip: String): Long {
+        val p = ip.split(".")
+        if (p.size != 4) return -1
+        return try {
+            ((p[0].toLong() shl 24) or (p[1].toLong() shl 16) or
+             (p[2].toLong() shl 8) or p[3].toLong()) and 0xFFFFFFFFL
+        } catch (_: NumberFormatException) { -1 }
+    }
+    private fun parseCidr(c: String): Pair<Long, Long> {
+        val parts = c.split("/")
+        val bits = parts[1].toInt()
+        val mask = if (bits == 0) 0L else (-1L shl (32 - bits)) and 0xFFFFFFFFL
+        return (ipToLong(parts[0]) and mask) to mask
+    }
+    private fun isRuIp(ip: String): Boolean {
+        val v = ipToLong(ip)
+        if (v < 0) return false
+        return RU_CIDRS.any { (base, mask) -> (v and mask) == base }
+    }
 
     /** @param service the live VpnService (needed for protect()); null → skip egress probes. */
     fun run(ctx: Context, service: VpnService?, underlying: Network?): JSONObject {
@@ -70,8 +94,11 @@ object Diagnostics {
         var privActive = false
         var privName: String? = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && cm != null) {
-            // Check the underlying physical net first, then the active net.
-            val probes = listOfNotNull(net, cm.activeNetwork)
+            // Check ONLY the underlying physical net — once the VPN is up
+            // cm.activeNetwork is the VPN itself, whose LinkProperties don't reflect
+            // the system Private DNS on the uplink. Fall back to activeNetwork only
+            // if we have no underlying net at all.
+            val probes = listOfNotNull(net ?: cm.activeNetwork)
             for (n in probes) {
                 val lp = try { cm.getLinkProperties(n) } catch (_: Exception) { null } ?: continue
                 if (lp.isPrivateDnsActive) {

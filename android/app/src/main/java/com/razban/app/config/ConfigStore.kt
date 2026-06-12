@@ -264,7 +264,13 @@ object ConfigStore {
      *  RU-correct answers. (1.1.1.1 is also dns-proxy's DoT target via detour:proxy — that
      *  is a server-level dial, unaffected by route.rules, so no conflict.) */
     private val dohDirectIps = listOf(
-        "1.1.1.1/32", "1.0.0.1/32", "8.8.8.8/32", "8.8.4.4/32",
+        // NOTE: deliberately EXCLUDES 1.1.1.1 / 1.0.0.1 — those are dns-proxy's DoT
+        // target (detour:proxy, for resolving FOREIGN/blocked names via the tunnel to
+        // dodge RU poisoning). Pinning them direct here could send dns-proxy's own
+        // query out the RU NIC → RU DPI poisons blocked-domain DNS. The browser's
+        // Cloudflare DoH is still covered by the hostname rule (cloudflare-dns.com /
+        // one.one.one.one in ruDirectSuffixes), so dropping the raw IPs costs ~nothing.
+        "8.8.8.8/32", "8.8.4.4/32",
         "9.9.9.9/32", "9.9.9.10/32", "149.112.112.112/32",
         "94.140.14.14/32", "94.140.15.15/32",
         "208.67.222.222/32", "208.67.220.220/32",
