@@ -72,7 +72,7 @@ jobs:
           script: |
             adb logcat -c || true
             adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/site-logcat.txt" 2>&1 &
-            gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.SiteAccessTest,com.razban.app.UpdaterDownloadTest --no-daemon --stacktrace
+            gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.SiteAccessTest,com.razban.app.UpdaterDownloadTest,com.razban.app.RuRoutingTest --no-daemon --stacktrace
       - name: Show site-access results
         if: always()
         run: |
@@ -83,6 +83,8 @@ jobs:
           grep -aE "startTunnel|openTun|service started OK" "$F" 2>/dev/null | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | head -20 || echo none
           echo "===== GeoClassifier (runtime RU→direct) ====="
           grep -aE "razban-geo|geo-phase|geo-result|geo-pinned" "$F" 2>/dev/null | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | head -30 || echo none
+          echo "===== ru-route (is the fix in the RUNNING config?) ====="
+          grep -aE "ru-route" "$F" 2>/dev/null | sed -E 's/^[0-9-]+ [0-9:.]+ +[0-9]+ +[0-9]+ //' | head -30 || echo none
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
