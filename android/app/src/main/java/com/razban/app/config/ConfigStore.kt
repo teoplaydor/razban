@@ -77,11 +77,14 @@ object ConfigStore {
             val raw = readBundledDefault(context) ?: return null
             try { val a = adaptForAndroid(raw); f.writeText(a); a } catch (_: Exception) { return null }
         }
-        // Overlay the user's per-app / per-domain route picks on EVERY load, so a
-        // settings change (→ ACTION_RELOAD → reload() → currentConfigJson) takes
-        // effect without re-importing the base config. The base file on disk stays
-        // free of user rules — they're layered in here from SharedPreferences.
-        return injectUserRoutes(base, context)
+        // Re-apply the RU direct splices (dns-ru + .ru/VK route + DoH-IP route) on
+        // EVERY load. adaptForAndroid runs ONLY at import/seed, so a user whose 'hub'
+        // config was adapted by an OLDER apk keeps a STALE RU adaptation (e.g. no
+        // dns-ru at all → every .ru resolves via the tunnel → dead) until they
+        // re-redeem. Freshening here makes an app UPDATE alone deliver the latest
+        // RU/VK/DNS fixes — no re-redeem needed. THEN overlay the user's per-app /
+        // per-domain picks (above the RU rules, so user pins win).
+        return injectUserRoutes(freshenRuConfig(base), context)
     }
 
     /** Import a sing-box config (pasted text / file / URL body). Adapts and
@@ -163,8 +166,11 @@ object ConfigStore {
                 inb.remove("interface_name")
                 inb.put("auto_route", true)
                 inb.put("stack", "gvisor")
-                val mtu = inb.optInt("mtu", 1420)
-                if (mtu > 1500 || mtu <= 0) inb.put("mtu", 1420)
+                // ALWAYS set mtu (not just when out of range): if the field is omitted
+                // sing-box falls back to its Android default tunMTU=9000 → jumbo-MTU
+                // fragmentation blackhole (the desktop wintun saga). Clamp to ≤1500.
+                val mtu = inb.optInt("mtu", 0)
+                inb.put("mtu", if (mtu in 1..1500) mtu else 1420)
             }
         }
         root.put("inbounds", inbounds)
@@ -232,9 +238,13 @@ object ConfigStore {
         ".ru", ".su", ".xn--p1ai",
         // Yandex assets/CDN (foreign TLD — not caught by .ru):
         "yastatic.net", "yandex.net", "yandexcloud.net", "yastat.net",
-        // VK family:
+        // VK family (incl. foreign-TLD helpers/CDNs that otherwise tunnel → VK lag;
+        // userapi.com already covers the sun*-*.userapi.com video/photo cluster, and
+        // vk.ru/vkvideo.ru are caught by the leading .ru blanket):
         "vk.com", "vk.me", "vkuser.net", "vk-cdn.net", "vkuservideo.net",
-        "userapi.com", "mycdn.me",
+        "userapi.com", "mycdn.me", "vkuserlive.net", "vk-apps.com",
+        "vk-portal.net", "vkcache.com", "vk-share.com", "mvk.com",
+        "vk.team", "vkads.com", "okcdn.ru",
         // Mail.ru / marketplaces / maps:
         "my.com", "mradx.net", "avito.st", "wbstatic.net",
         "ozonusercontent.com", "2gis.com", "sber.ru",
@@ -357,6 +367,69 @@ object ConfigStore {
         val merged = JSONArray().put(ruDnsRule)   // prepend so RU resolution wins
         for (i in 0 until rules.length()) merged.put(rules.get(i))
         dns.put("rules", merged)
+    }
+
+    /** Re-apply the RU splices fresh on every load (see currentConfigJson). Removes
+     *  the prior dns-ru server + RU dns/route rules, then re-runs ensureRuDirectDns +
+     *  ensureRuDirect so the LATEST ruDirectSuffixes/dohDirectIps win even on a config
+     *  that an older apk adapted. Idempotent + safe on an unadapted config. */
+    private fun freshenRuConfig(json: String): String = try {
+        val root = JSONObject(json)
+        removeRuSplices(root)
+        ensureRuDirectDns(root)
+        ensureRuDirect(root)
+        root.toString()
+    } catch (_: Exception) { json }
+
+    private fun removeRuSplices(root: JSONObject) {
+        root.optJSONObject("dns")?.let { dns ->
+            dns.optJSONArray("servers")?.let { srv ->
+                val keep = JSONArray()
+                for (i in 0 until srv.length()) {
+                    val s = srv.optJSONObject(i)
+                    if (s != null && s.optString("tag").startsWith("dns-ru")) continue
+                    keep.put(srv.get(i))
+                }
+                dns.put("servers", keep)
+            }
+            dns.optJSONArray("rules")?.let { rules ->
+                val keep = JSONArray()
+                for (i in 0 until rules.length()) {
+                    val r = rules.optJSONObject(i)
+                    if (r != null && r.optString("server").startsWith("dns-ru")) continue
+                    keep.put(rules.get(i))
+                }
+                dns.put("rules", keep)
+            }
+        }
+        root.optJSONObject("route")?.optJSONArray("rules")?.let { rules ->
+            val keep = JSONArray()
+            for (i in 0 until rules.length()) {
+                val r = rules.optJSONObject(i)
+                if (r != null && isOurRuSplice(r)) continue
+                keep.put(rules.get(i))
+            }
+            root.optJSONObject("route")!!.put("rules", keep)
+        }
+    }
+
+    /** Identify the route rules WE added (the blanket .ru/VK domain rule + the
+     *  DoH-resolver-IP ip_cidr rule), so removeRuSplices drops only ours, never a
+     *  ColdBoot/user direct rule. Signature is precise: the blanket rule contains
+     *  .ru AND .su AND .xn--p1ai together; the ip rule contains 8.8.8.8/32. */
+    private fun isOurRuSplice(r: JSONObject): Boolean {
+        if (r.optString("outbound") != "direct") return false
+        r.optJSONArray("domain_suffix")?.let { ds ->
+            var ru = false; var su = false; var rf = false
+            for (i in 0 until ds.length()) when (ds.optString(i)) {
+                ".ru" -> ru = true; ".su" -> su = true; ".xn--p1ai" -> rf = true
+            }
+            if (ru && su && rf) return true
+        }
+        r.optJSONArray("ip_cidr")?.let { ic ->
+            for (i in 0 until ic.length()) if (ic.optString(i) == "8.8.8.8/32") return true
+        }
+        return false
     }
 
     private fun normalizeExactDomains(root: JSONObject) {
