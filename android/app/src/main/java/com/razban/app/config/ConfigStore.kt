@@ -225,6 +225,11 @@ object ConfigStore {
         // (injectUserRoutes) still splice ABOVE this, so an explicit override wins.
         ensureRuDirect(root)
 
+        // Force browser traffic onto the sniffable TCP path (reject QUIC:443 + strip
+        // ECH/HTTPS DNS) so route-by-SNI works → RU sites stop getting RST'd as foreign
+        // (ERR_CONNECTION_CLOSED). freshenRuConfig re-applies this on every load too.
+        ensureSniffable(root)
+
         // Compact (not toString(2)) — the core ignores indentation, and pretty-printing
         // a 1000+-rule config on every connect is pure CPU waste on the hot path.
         return root.toString()
@@ -378,8 +383,58 @@ object ConfigStore {
         removeRuSplices(root)
         ensureRuDirectDns(root)
         ensureRuDirect(root)
+        ensureSniffable(root)
         root.toString()
     } catch (_: Exception) { json }
+
+    /** Force browser traffic onto a SNIFFABLE path so route-by-SNI (.ru→direct) works,
+     *  fixing ERR_CONNECTION_CLOSED on RU sites. A flow whose SNI sing-box can't read
+     *  falls to route.final=proxy (tunnel); the RU site then sees a FOREIGN exit IP and
+     *  RSTs the TLS → the browser shows ERR_CONNECTION_CLOSED. Two unsniffable paths:
+     *   (1) QUIC/HTTP3 (UDP:443) — sing-box can't sniff the QUIC ClientHello SNI. Reject
+     *       UDP:443 so Chrome falls back to TCP/HTTP2, whose SNI we CAN sniff → .ru→direct.
+     *   (2) ECH (Encrypted ClientHello) — enabled when DNS hands back an HTTPS/SVCB record
+     *       (type 64/65) carrying ECHConfig; it hides the SNI even on TCP. Reject those DNS
+     *       queries → no ECHConfig → SNI stays plaintext → sniffable.
+     *  Tradeoff: no HTTP/3 (falls to HTTP/2) — acceptable; correct routing > QUIC speed for
+     *  an anti-censorship client. Idempotent. */
+    private fun ensureSniffable(root: JSONObject) {
+        root.optJSONObject("route")?.let { route ->
+            val rules = route.optJSONArray("rules") ?: JSONArray()
+            var has = false
+            for (i in 0 until rules.length()) {
+                val r = rules.optJSONObject(i) ?: continue
+                if (r.optString("network") == "udp" && r.optString("action") == "reject") { has = true; break }
+            }
+            if (!has) {
+                val quic = JSONObject().put("network", "udp")
+                    .put("port", JSONArray().put(443)).put("action", "reject")
+                val merged = JSONArray(); var inj = false
+                for (i in 0 until rules.length()) {
+                    val r = rules.optJSONObject(i)
+                    val isAction = r != null && (r.has("action") || r.optString("protocol").isNotEmpty())
+                    if (!inj && !isAction) { merged.put(quic); inj = true }
+                    merged.put(rules.get(i))
+                }
+                if (!inj) merged.put(quic)
+                route.put("rules", merged)
+            }
+        }
+        root.optJSONObject("dns")?.let { dns ->
+            val rules = dns.optJSONArray("rules") ?: JSONArray()
+            var has = false
+            for (i in 0 until rules.length()) {
+                val r = rules.optJSONObject(i) ?: continue
+                if (r.has("query_type") && r.optString("action") == "reject") { has = true; break }
+            }
+            if (!has) {
+                val ech = JSONObject().put("query_type", JSONArray().put(64).put(65)).put("action", "reject")
+                val merged = JSONArray().put(ech)
+                for (i in 0 until rules.length()) merged.put(rules.get(i))
+                dns.put("rules", merged)
+            }
+        }
+    }
 
     private fun removeRuSplices(root: JSONObject) {
         root.optJSONObject("dns")?.let { dns ->
