@@ -101,10 +101,32 @@ object DefaultNetworkMonitor {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
         val lp: LinkProperties = cm.getLinkProperties(network) ?: return
         val name = lp.interfaceName ?: return
-        val index = try { java.net.NetworkInterface.getByName(name)?.index ?: 0 } catch (_: Exception) { 0 }
+        val index = resolveIfIndex(name)
         val caps = cm.getNetworkCapabilities(network)
         val expensive = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)?.not() ?: false
+        android.util.Log.i("razban-net", "default iface=$name index=$index expensive=$expensive")
         listener?.updateDefaultInterface(name, index, expensive, false)
+    }
+
+    /** Resolve a network-interface index the core can bind its `direct` sockets to.
+     *  🔴 On cellular the uplink is an rmnet (e.g. rmnet_data0) that unprivileged
+     *  `java.net.NetworkInterface.getByName` frequently CANNOT enumerate on API 30+ →
+     *  returns null → index 0 = "no bound interface" → the core's protected direct
+     *  sockets fall to the OS default route on a multi-network phone → egress on the
+     *  wrong/dead network → sites don't load. `Os.if_nametoindex` resolves rmnet
+     *  without enumeration privileges. Invisible on the single-wlan0 emulator. */
+    private fun resolveIfIndex(name: String): Int {
+        try {
+            val i = java.net.NetworkInterface.getByName(name)?.index ?: 0
+            if (i > 0) return i
+        } catch (_: Exception) {}
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                val i = android.system.Os.if_nametoindex(name)
+                if (i > 0) return i
+            } catch (_: Throwable) {}
+        }
+        return 0
     }
 
     /** Snapshot of all interfaces, for the core's interface enumeration. */

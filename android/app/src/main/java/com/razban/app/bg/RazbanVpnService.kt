@@ -237,9 +237,16 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
 
-        // Interface addresses (e.g. 172.19.0.1/30, fdfe:.../126).
+        // Interface addresses (e.g. 172.19.0.1/30, fdfe:.../126). Add the IPv6 TUN
+        // address ONLY if the underlying uplink actually has usable global IPv6 —
+        // else the OS installs a v6 default route INTO the tun that blackholes every
+        // v6 flow on v4-only cellular (a real-phone failure the single-net emulator
+        // can't reproduce). dns.strategy=ipv4_only already biases to A records; this
+        // closes the literal-v6 / AAAA-fallback blackhole.
+        val addV6 = underlyingHasGlobalV6()
+        android.util.Log.i("razban-net", "openTun: addV6(uplink has global v6)=$addV6")
         options.inet4Address.let { while (it.hasNext()) it.next().let { p -> builder.addAddress(p.address(), p.prefix()) } }
-        options.inet6Address.let { while (it.hasNext()) it.next().let { p -> builder.addAddress(p.address(), p.prefix()) } }
+        if (addV6) options.inet6Address.let { while (it.hasNext()) it.next().let { p -> builder.addAddress(p.address(), p.prefix()) } }
 
         if (options.autoRoute) {
             // DNS server(s) the OS will send queries to while the VPN is up.
@@ -268,8 +275,10 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             val rr4 = options.inet4RouteRange
             if (rr4.hasNext()) while (rr4.hasNext()) rr4.next().let { builder.addRoute(it.address(), it.prefix()) }
             else builder.addRoute("0.0.0.0", 0)
-            val rr6 = options.inet6RouteRange
-            while (rr6.hasNext()) rr6.next().let { builder.addRoute(it.address(), it.prefix()) }
+            if (addV6) {
+                val rr6 = options.inet6RouteRange
+                while (rr6.hasNext()) rr6.next().let { builder.addRoute(it.address(), it.prefix()) }
+            }
         }
 
         // Per-app entry filtering (mirror of the OverrideOptions set at start;
@@ -295,6 +304,23 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         } catch (_: Throwable) {}
         android.util.Log.d(TAG, "openTun: established fd=${pfd.fd}, underlying=${DefaultNetworkMonitor.currentNetwork}")
         return pfd.fd
+    }
+
+    /** True if the underlying (non-VPN) uplink has a usable GLOBAL IPv6 address.
+     *  On v4-only cellular there is none → adding a v6 route into the TUN would
+     *  blackhole every v6 flow. Gates the v6 TUN address + routes in openTun. */
+    private fun underlyingHasGlobalV6(): Boolean {
+        return try {
+            val net = DefaultNetworkMonitor.currentNetwork
+                ?: DefaultNetworkMonitor.seed(applicationContext) ?: return false
+            val cm = getSystemService(android.net.ConnectivityManager::class.java) ?: return false
+            val lp = cm.getLinkProperties(net) ?: return false
+            lp.linkAddresses.any { la ->
+                val a = la.address
+                a is java.net.Inet6Address && !a.isLinkLocalAddress && !a.isLoopbackAddress &&
+                    !a.isAnyLocalAddress && !a.isMulticastAddress
+            }
+        } catch (_: Throwable) { false }
     }
 
     private fun tryAddAllowed(b: Builder, pkg: String) =
