@@ -67,7 +67,7 @@ jobs:
           build() {   # $1=abi  $2=goarch  $3=triple  [$4=goarm]
             mkdir -p "$OUT/$1"
             local cc; cc=$(pick_cc "$3") || { echo "::warning::no NDK clang for $1"; rm -rf "$OUT/$1"; return; }
-            if CGO_ENABLED=1 GOOS=android GOARCH="$2" ${4:+GOARM=$4} CC="$cc" go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$OUT/$1/libxray.so" ./main; then
+            if CGO_ENABLED=1 GOOS=android GOARCH="$2" ${4:+GOARM=$4} CC="$cc" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/$1/libxray.so" ./main; then
               file "$OUT/$1/libxray.so"; ls -la "$OUT/$1/libxray.so"
             else
               echo "::warning::xray build failed for $1 — ABI skipped"; rm -rf "$OUT/$1"
