@@ -44,8 +44,11 @@ jobs:
           git clone --depth 1 --branch "$XRAY_TAG" https://github.com/XTLS/Xray-core "$RUNNER_TEMP/xray"
           cd "$RUNNER_TEMP/xray"
           OUT="$GITHUB_WORKSPACE/android/app/src/main/jniLibs"
+          NDKBIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC=""; for api in 24 23 22 21; do [ -x "$NDKBIN/x86_64-linux-android${api}-clang" ] && { CC="$NDKBIN/x86_64-linux-android${api}-clang"; break; }; done
+          echo "using CC=$CC"
           mkdir -p "$OUT/x86_64"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -buildmode=pie -ldflags "-s -w" -o "$OUT/x86_64/libxray.so" ./main
+          CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w" -o "$OUT/x86_64/libxray.so" ./main
           file "$OUT/x86_64/libxray.so"; ls -la "$OUT/x86_64/libxray.so"
       - name: Enable KVM
         run: |
@@ -71,8 +74,7 @@ jobs:
             set +e
             adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/logcat-full.txt" 2>&1 &
             LOGCAT_PID=$!
-            gradle connectedDebugAndroidTest --no-daemon --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.XrayDiagTest
+            gradle connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.XrayDiagTest
             rc=$?
             sleep 3
             kill "$LOGCAT_PID" 2>/dev/null
