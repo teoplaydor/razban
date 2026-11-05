@@ -145,7 +145,14 @@ class WebUiBridge(
                 ConfigStore.importConfig(ctx, text)
                 JSONObject().put("count", 1)
             } else {
-                JSONObject().put("count", 0)
+                // A share URI (vless://…): parse it into a full config and import.
+                val cfg = com.razban.app.config.UriImport.toConfig(text)
+                if (cfg != null) {
+                    ConfigStore.importConfig(ctx, cfg)
+                    JSONObject().put("count", 1)
+                } else {
+                    JSONObject().put("count", 0)
+                }
             }
         }
 
