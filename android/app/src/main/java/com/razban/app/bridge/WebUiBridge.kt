@@ -137,7 +137,10 @@ class WebUiBridge(
         // bundle), not a list of URIs — import it as the active config.
         "servers.addMany", "servers.add" -> {
             val text = when (params) {
-                is JSONObject -> params.optString("text", params.optString("config", ""))
+                // The "Добавить" dialog's single-URI field sends {uri:…}; the bulk
+                // textarea and "Из буфера" send {text:…}; a code import sends {config:…}.
+                is JSONObject -> params.optString("text",
+                    params.optString("uri", params.optString("config", "")))
                 is String -> params
                 else -> ""
             }
