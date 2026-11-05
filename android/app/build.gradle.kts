@@ -11,8 +11,8 @@ android {
         applicationId = "com.razban.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 41
-        versionName = "0.1.40"
+        versionCode = 42
+        versionName = "0.1.41"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -82,7 +82,7 @@ android {
         }
         // libbox + byedpi .so are already per-ABI; don't compress them twice.
         jniLibs {
-            useLegacyPackaging = false
+            useLegacyPackaging = true
         }
     }
 }

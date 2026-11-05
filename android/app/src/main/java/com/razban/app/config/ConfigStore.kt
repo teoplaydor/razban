@@ -18,6 +18,7 @@ object ConfigStore {
 
     private const val FILE = "current-config.json"
     private const val PREFS = "razban"
+    private const val XRAY_FILE = "xray-config.json"
     private const val BUNDLED_ASSET = "default-config.json"
 
     /** True if an imported config exists OR a default config is bundled in the
@@ -96,6 +97,21 @@ object ConfigStore {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putBoolean("config_from_bundle", false).apply()
     }
+
+    /** Store (or clear, when null) the xray sidecar config for the active server.
+     *  Present ⇒ RazbanVpnService starts xray before sing-box and excludes the
+     *  app from the TUN. Set on every import so a native server clears a stale one. */
+    fun setXrayConfig(context: Context, json: String?) {
+        val f = File(context.filesDir, XRAY_FILE)
+        if (json == null) { try { f.delete() } catch (_: Exception) {} } else f.writeText(json)
+    }
+
+    fun xrayConfig(context: Context): String? {
+        val f = File(context.filesDir, XRAY_FILE)
+        return if (f.exists()) try { f.readText() } catch (_: Exception) { null } else null
+    }
+
+    fun hasXray(context: Context): Boolean = File(context.filesDir, XRAY_FILE).exists()
 
     /** Parsed view of the active config's protocol outbounds, for the Servers
      *  UI (so it shows the bundle's protocols instead of "0 of 0"). */

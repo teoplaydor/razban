@@ -91,6 +91,16 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                     ?: error("no config imported")
                 android.util.Log.d(TAG, "startTunnel: config loaded (${config.length} chars)")
 
+                // Reality servers run through the xray sidecar (sing-box uTLS is
+                // broken in our libbox build). Start it before sing-box so its
+                // local SOCKS is listening when sing-box's socks outbound dials it.
+                if (ConfigStore.hasXray(this@RazbanVpnService)) {
+                    val xcfg = ConfigStore.xrayConfig(this@RazbanVpnService)
+                    if (xcfg == null || !XrayProcess.start(this@RazbanVpnService, xcfg))
+                        error("xray sidecar failed to start")
+                    android.util.Log.d(TAG, "startTunnel: xray sidecar up on 127.0.0.1:${XrayProcess.SOCKS_PORT}")
+                }
+
                 val server = Libbox.newCommandServer(this@RazbanVpnService, this@RazbanVpnService)
                 android.util.Log.d(TAG, "startTunnel: command server created")
                 server.start()
@@ -173,6 +183,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             CoreStatus.onTick = null
             GeoClassifier.stop()
             CoreStatus.stop()
+            XrayProcess.stop()
             try { commandServer?.closeService() } catch (_: Throwable) {}
             try { commandServer?.close() } catch (_: Throwable) {}
             commandServer = null
@@ -285,6 +296,9 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         // libbox surfaces them back through TunOptions too).
         options.includePackage.let { while (it.hasNext()) tryAddAllowed(builder, it.next()) }
         options.excludePackage.let { while (it.hasNext()) tryAddDisallowed(builder, it.next()) }
+        // xray sidecar mode: exclude our own app from the TUN so xray's socket to
+        // the server egresses on the physical NIC instead of looping back in.
+        if (ConfigStore.hasXray(this)) tryAddDisallowed(builder, packageName)
         // NOTE: we intentionally do NOT exclude our own package. The command
         // channel is a unix socket (not network), so it isn't captured by the
         // TUN, and routing our own update/probe traffic through the tunnel is

@@ -25,6 +25,7 @@
     </queries>
 
     <application
+        android:extractNativeLibs="true"
         android:name=".RazbanApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

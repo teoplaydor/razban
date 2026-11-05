@@ -145,10 +145,11 @@ class WebUiBridge(
                 ConfigStore.importConfig(ctx, text)
                 JSONObject().put("count", 1)
             } else {
-                // A share URI (vless://…): parse it into a full config and import.
-                val cfg = com.razban.app.config.UriImport.toConfig(text)
-                if (cfg != null) {
-                    ConfigStore.importConfig(ctx, cfg)
+                // A share URI (vless://…): parse into sing-box (+ optional xray) configs.
+                val r = com.razban.app.config.UriImport.toImport(text)
+                if (r != null) {
+                    ConfigStore.setXrayConfig(ctx, r.xray)
+                    ConfigStore.importConfig(ctx, r.singbox)
                     JSONObject().put("count", 1)
                 } else {
                     JSONObject().put("count", 0)
