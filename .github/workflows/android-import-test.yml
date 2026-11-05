@@ -1,0 +1,99 @@
+name: android-import-test
+
+# Bench for the profile-import bug: boot an emulator and run BridgeImportTest,
+# which drives the real WebUiBridge envelope (servers.add {uri}) and asserts the
+# imported Reality server SHOWS in servers.list. Pass/fail gate (not a diag).
+# Does not start the core, so no runtime cores needed — but the APK must compile,
+# which needs libbox.aar (xray x86_64 kept for parity with the shipped build).
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'bench/**'
+
+permissions:
+  contents: read
+
+jobs:
+  import-test:
+    runs-on: ubuntu-latest
+    env:
+      SING_BOX_TAG: v1.13.12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Set up Go 1.24
+        uses: actions/setup-go@v5
+        with: { go-version: '1.24.7' }
+      - name: Set up Android SDK + NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install NDK 28 + SDK platform/build-tools
+        run: |
+          yes | sdkmanager "ndk;28.0.13004108" "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >> "$GITHUB_ENV"
+      - name: Build libbox.aar
+        run: bash android/build-libbox.sh "$SING_BOX_TAG"
+      - name: Set up Go 1.27 for xray
+        uses: actions/setup-go@v5
+        with: { go-version: '1.27.0' }
+      - name: Build xray-core x86_64 (emulator ABI)
+        env:
+          XRAY_TAG: v26.10.31
+        run: |
+          git clone --depth 1 --branch "$XRAY_TAG" https://github.com/XTLS/Xray-core "$RUNNER_TEMP/xray"
+          cd "$RUNNER_TEMP/xray"
+          OUT="$GITHUB_WORKSPACE/android/app/src/main/jniLibs"
+          NDKBIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC=""; for api in 24 23 22 21; do [ -x "$NDKBIN/x86_64-linux-android${api}-clang" ] && { CC="$NDKBIN/x86_64-linux-android${api}-clang"; break; }; done
+          echo "using CC=$CC"
+          mkdir -p "$OUT/x86_64"
+          CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/x86_64/libxray.so" ./main
+          file "$OUT/x86_64/libxray.so"; ls -la "$OUT/x86_64/libxray.so"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Run BridgeImportTest on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          working-directory: android
+          script: |
+            adb wait-for-device
+            adb logcat -c || true
+            set +e
+            adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/logcat-full.txt" 2>&1 &
+            LOGCAT_PID=$!
+            gradle connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.BridgeImportTest
+            rc=$?
+            sleep 3
+            kill "$LOGCAT_PID" 2>/dev/null
+            echo "rc=$rc"
+            exit $rc
+      - name: Dump import logcat
+        if: always()
+        run: |
+          F="$GITHUB_WORKSPACE/android/logcat-full.txt"
+          echo "===== razban-import / razban-bridge / crashes ====="
+          grep -aE "razban-import|razban-bridge|Fatal signal|AndroidRuntime|panic" "$F" | head -200 || echo "(none)"
+          echo "===== END ====="
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: import-test-logcat
+          path: android/logcat-full.txt

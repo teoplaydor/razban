@@ -146,6 +146,7 @@ class WebUiBridge(
             }
             if (text.trimStart().startsWith("{") && text.contains("\"outbounds\"")) {
                 ConfigStore.importConfig(ctx, text)
+                pushEvent("servers.changed", true)   // tell the UI to re-fetch the list
                 JSONObject().put("count", 1)
             } else {
                 // A share URI (vless://…): parse into sing-box (+ optional xray) configs.
@@ -153,6 +154,7 @@ class WebUiBridge(
                 if (r != null) {
                     ConfigStore.setXrayConfig(ctx, r.xray)
                     ConfigStore.importConfig(ctx, r.singbox)
+                    pushEvent("servers.changed", true)   // tell the UI to re-fetch the list
                     JSONObject().put("count", 1)
                 } else {
                     JSONObject().put("count", 0)

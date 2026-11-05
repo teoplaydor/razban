@@ -116,8 +116,13 @@ object ConfigStore {
     /** Parsed view of the active config's protocol outbounds, for the Servers
      *  UI (so it shows the bundle's protocols instead of "0 of 0"). */
     fun protocolOutbounds(context: Context): List<Triple<String, String, Pair<String, Int>>> {
-        val json = currentConfigJson(context) ?: return emptyList()
         val out = ArrayList<Triple<String, String, Pair<String, Int>>>()
+        // A Reality import keeps the REAL vless server in the xray sidecar config;
+        // the sing-box config only has the socks→xray bridge + direct (neither a
+        // user-facing protocol). Without this the Servers/bundle UI showed an empty
+        // list after import → "ничего не происходит в интерфейсе. Абсолютно".
+        xrayServer(context)?.let { out.add(it) }
+        val json = currentConfigJson(context) ?: return out
         try {
             val root = JSONObject(json)
             val realTypes = setOf("vless", "vmess", "trojan", "hysteria2", "hysteria",
@@ -141,6 +146,28 @@ object ConfigStore {
             }
         } catch (_: Exception) {}
         return out
+    }
+
+    /** The vless/Reality server carried by the xray sidecar config, as a Server
+     *  triple (tag, "vless", host→port) for the UI. Null when no sidecar is active.
+     *  For a Reality profile this is the ONLY user-facing server — the sing-box
+     *  config just forwards the TUN into xray's local SOCKS. */
+    private fun xrayServer(context: Context): Triple<String, String, Pair<String, Int>>? {
+        val json = xrayConfig(context) ?: return null
+        return try {
+            val obs = JSONObject(json).optJSONArray("outbounds") ?: return null
+            for (i in 0 until obs.length()) {
+                val o = obs.optJSONObject(i) ?: continue
+                if (o.optString("protocol") != "vless") continue
+                val vnext = o.optJSONObject("settings")?.optJSONArray("vnext")?.optJSONObject(0) ?: continue
+                val host = vnext.optString("address", "")
+                val port = vnext.optInt("port", 0)
+                if (host.isEmpty() || port == 0) continue
+                val tag = o.optString("tag", "reality").let { if (it == "proxy") "reality" else it }
+                return Triple(tag, "vless", host to port)
+            }
+            null
+        } catch (_: Exception) { null }
     }
 
     fun includePackages(context: Context): List<String> =
