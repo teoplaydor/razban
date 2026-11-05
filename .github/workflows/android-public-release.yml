@@ -63,20 +63,21 @@ jobs:
           cd "$RUNNER_TEMP/xray"
           OUT="$GITHUB_WORKSPACE/android/app/src/main/jniLibs"
           NDKBIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          pick_cc() { for api in 24 23 22 21; do [ -x "$NDKBIN/${1}${api}-clang" ] && { echo "$NDKBIN/${1}${api}-clang"; return; }; done; return 1; }
-          build() {   # $1=abi  $2=goarch  $3=triple  [$4=goarm]
-            mkdir -p "$OUT/$1"
-            local cc; cc=$(pick_cc "$3") || { echo "::warning::no NDK clang for $1"; rm -rf "$OUT/$1"; return; }
-            if CGO_ENABLED=1 GOOS=android GOARCH="$2" ${4:+GOARM=$4} CC="$cc" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/$1/libxray.so" ./main; then
-              file "$OUT/$1/libxray.so"; ls -la "$OUT/$1/libxray.so"
-            else
-              echo "::warning::xray build failed for $1 — ABI skipped"; rm -rf "$OUT/$1"
-            fi
-          }
-          build arm64-v8a   arm64 aarch64-linux-android
-          build armeabi-v7a arm   armv7a-linux-androideabi 7
-          build x86_64      amd64 x86_64-linux-android
-          test -f "$OUT/arm64-v8a/libxray.so" || { echo "::error::arm64 xray build failed"; exit 1; }
+          echo "=== clang wrappers in NDK ==="; ls "$NDKBIN" | grep -E 'android.*-clang$' | sort
+          # arm64-v8a
+          CC=""; for api in 21 22 23 24 26 28 29 30 33 34; do [ -x "$NDKBIN/aarch64-linux-android${api}-clang" ] && { CC="$NDKBIN/aarch64-linux-android${api}-clang"; break; }; done
+          echo "arm64 CC=$CC"; mkdir -p "$OUT/arm64-v8a"
+          CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/arm64-v8a/libxray.so" ./main
+          file "$OUT/arm64-v8a/libxray.so"
+          # armeabi-v7a (best-effort)
+          CC=""; for api in 21 22 23 24 26 28 29 30 33 34; do [ -x "$NDKBIN/armv7a-linux-androideabi${api}-clang" ] && { CC="$NDKBIN/armv7a-linux-androideabi${api}-clang"; break; }; done
+          echo "arm CC=$CC"; mkdir -p "$OUT/armeabi-v7a"
+          CGO_ENABLED=1 GOOS=android GOARCH=arm GOARM=7 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/armeabi-v7a/libxray.so" ./main || { echo "::warning::arm xray failed — ABI skipped"; rm -rf "$OUT/armeabi-v7a"; }
+          # x86_64 (best-effort)
+          CC=""; for api in 21 22 23 24 26 28 29 30 33 34; do [ -x "$NDKBIN/x86_64-linux-android${api}-clang" ] && { CC="$NDKBIN/x86_64-linux-android${api}-clang"; break; }; done
+          echo "x86_64 CC=$CC"; mkdir -p "$OUT/x86_64"
+          CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/x86_64/libxray.so" ./main || { echo "::warning::x86_64 xray failed — ABI skipped"; rm -rf "$OUT/x86_64"; }
+          echo "=== built libs ==="; find "$OUT" -name libxray.so -exec file {} \;
       - name: Decode keystore
         id: ks
         run: |
