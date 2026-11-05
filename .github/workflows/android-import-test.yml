@@ -73,16 +73,13 @@ jobs:
           disable-animations: true
           working-directory: android
           script: |
+            set +e
             adb wait-for-device
             adb logcat -c || true
-            set +e
-            adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/logcat-full.txt" 2>&1 &
-            LOGCAT_PID=$!
             gradle connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.BridgeImportTest
             rc=$?
-            sleep 3
-            kill "$LOGCAT_PID" 2>/dev/null
-            echo "rc=$rc"
+            adb logcat -d -v threadtime > "$GITHUB_WORKSPACE/android/logcat-full.txt" 2>&1 || true
+            echo "gradle rc=$rc"
             exit $rc
       - name: Dump import logcat
         if: always()
