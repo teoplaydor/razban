@@ -79,7 +79,7 @@ class DirectTcpRuntimeTest {
             assertEquals("direct_profile_kind", e.message)
         }
         val doc = """
-            {"razbanProfile":"direct-tcp-experimental","signal":{"url":"https://192.0.2.1:9444/v1/session","caPem":"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----","hmacKeyHex":"${"ab"*32}"},"plan":{"mode":"active","device":{"peer":["192.0.2.2",9443]}},"xray":{},"evil":"-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----"}
+            {"razbanProfile":"direct-tcp-experimental","signal":{"url":"https://192.0.2.1:9444/v1/session","caPem":"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----","hmacKeyHex":"${"ab".repeat(32)}"},"plan":{"mode":"active","device":{"peer":["192.0.2.2",9443]}},"xray":{},"evil":"-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----"}
         """.trimIndent()
         try {
             DirectProfile.parse(doc)

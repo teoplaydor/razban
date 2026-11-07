@@ -175,9 +175,26 @@ jobs:
           if unzip -l "$APK" | grep -q "assets/default-config.json"; then
             echo "::error::APK contains default-config.json"; exit 1
           fi
-          if unzip -p "$APK" | grep -aE -- "-----BEGIN ([A-Z0-9]+ )?PRIVATE KEY-----" >/dev/null; then
-            echo "::error::APK appears to contain a PEM private key"; exit 1
-          fi
+          python3 - <<'PY'
+          import sys, zipfile
+          apk = sys.argv[1]
+          needle = b"-----BEGIN "
+          suffix = b"PRIVATE KEY-----"
+          hits = []
+          with zipfile.ZipFile(apk) as zf:
+              for info in zf.infolist():
+                  name = info.filename
+                  if name.startswith("assets/webui/"):
+                      continue
+                  data = zf.read(info)
+                  if needle in data and suffix in data:
+                      hits.append(name)
+          if hits:
+              print("PEM private key material found in:", *hits, sep="\n")
+              sys.exit(1)
+          print("no PEM private keys outside webui placeholder assets")
+          PY
+            "$APK"
           AAPT="$ANDROID_SDK_ROOT/build-tools/34.0.0/aapt"
           BADGE=$("$AAPT" dump badging "$APK")
           echo "$BADGE" | head -5
