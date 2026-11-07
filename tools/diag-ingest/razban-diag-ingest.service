@@ -1,0 +1,21 @@
+[Unit]
+Description=Razban isolated diagnostic ingest (TCP 9446)
+After=network.target
+# Isolated from xray, amneziawg, and any expired autocoord on 9444.
+
+[Service]
+Type=simple
+User=razban-diag
+Group=razban-diag
+WorkingDirectory=/opt/razban-diag-ingest
+ExecStart=/usr/bin/python3 /opt/razban-diag-ingest/receiver.py --listen 0.0.0.0:9446 --cert /opt/razban-diag-ingest/tls.crt --key /opt/razban-diag-ingest/tls.key --data /opt/razban-diag-ingest/data
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/razban-diag-ingest
+
+[Install]
+WantedBy=multi-user.target

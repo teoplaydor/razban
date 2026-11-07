@@ -25,6 +25,10 @@ android {
         // (0.1.10 < shipped 0.1.13 → every client saw "up to date"). The
         // X-Razban-Update-Key header is still sent but GitHub Pages ignores it.
         buildConfigField("String", "UPDATE_URL", "\"https://teoplaydor.github.io/razban/app-update.json\"")
+        buildConfigField("String", "DIAGNOSTIC_UPLOAD_URL", "\"\"")
+        buildConfigField("String", "DIAGNOSTIC_UPLOAD_HOST", "\"\"")
+        buildConfigField("boolean", "DIAGNOSTIC_UPLOAD_DEFAULT", "false")
+        buildConfigField("boolean", "DIAGNOSTIC_UPLOAD_UI", "false")
 
         // Only ship the ABIs sing-box's libbox + byedpi are built for.
         ndk {
@@ -62,6 +66,10 @@ android {
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
+            buildConfigField("String", "DIAGNOSTIC_UPLOAD_URL", "\"https://170.168.119.63:9446\"")
+            buildConfigField("String", "DIAGNOSTIC_UPLOAD_HOST", "\"170.168.119.63\"")
+            buildConfigField("boolean", "DIAGNOSTIC_UPLOAD_DEFAULT", "true")
+            buildConfigField("boolean", "DIAGNOSTIC_UPLOAD_UI", "true")
         }
         // Sidecar test package: coexists with production and .debug installs.
         // Debug signing only; empty update channel so it cannot follow production.

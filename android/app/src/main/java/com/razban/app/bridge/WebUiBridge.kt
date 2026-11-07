@@ -5,6 +5,7 @@ import android.webkit.JavascriptInterface
 import com.razban.app.bg.RazbanVpnService
 import com.razban.app.config.ConfigStore
 import com.razban.app.config.ProfileStore
+import com.razban.app.diag.DiagnosticReporter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -85,6 +86,12 @@ class WebUiBridge(
         // egress to a RU IP / what yandex.ru resolves to). Cached at Connect.
         "diag.last" -> com.razban.app.bg.Diagnostics.last
             ?: JSONObject().put("verdict", "диагностика ещё не запускалась — подключитесь")
+        "diagUpload.get" -> DiagnosticReporter.statusJson(ctx)
+        "diagUpload.set" -> {
+            val enabled = (params as? JSONObject)?.optBoolean("enabled", false) ?: false
+            DiagnosticReporter.setEnabled(ctx, enabled)
+            DiagnosticReporter.statusJson(ctx)
+        }
 
         "settings.get" -> settingsJson()
         "settings.set" -> { saveSettings(params); true }

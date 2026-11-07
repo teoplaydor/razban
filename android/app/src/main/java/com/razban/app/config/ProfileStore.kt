@@ -2,6 +2,7 @@ package com.razban.app.config
 
 import android.content.Context
 import com.razban.app.direct.DirectProfile
+import com.razban.app.diag.DiagnosticReporter
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -88,6 +89,7 @@ object ProfileStore {
             File(context.filesDir, DIRECT_ACTIVE).delete()
         }
         File(context.filesDir, ACTIVE).writeText(name)
+        DiagnosticReporter.record(context, "profile_select")
         return true
     }
 
@@ -131,8 +133,10 @@ object ProfileStore {
             return try {
                 val profile = DirectProfile.parse(trimmed)
                 saveDirect(context, profile)
+                DiagnosticReporter.record(context, "import_ok")
                 ImportResult(true, profile.name, DirectProfile.KIND, 1)
             } catch (e: Exception) {
+                DiagnosticReporter.record(context, "import_failed", "unknown")
                 ImportResult(false, error = e.message ?: "direct_import")
             }
         }
@@ -141,13 +145,19 @@ object ProfileStore {
             ConfigStore.importConfig(context, trimmed)
             val name = JSONObject(trimmed).optString("profileName").ifBlank { RELAY_BASELINE }
             saveRelay(context, name, File(context.filesDir, "current-config.json").readText(), null)
+            DiagnosticReporter.record(context, "import_ok")
             return ImportResult(true, name, "relay", 1)
         }
-        val parsed = UriImport.toImport(trimmed) ?: return ImportResult(false, error = "unsupported")
+        val parsed = UriImport.toImport(trimmed)
+        if (parsed == null) {
+            DiagnosticReporter.record(context, "import_failed", "unknown")
+            return ImportResult(false, error = "unsupported")
+        }
         ConfigStore.setXrayConfig(context, parsed.xray)
         ConfigStore.importConfig(context, parsed.singbox)
         val name = UriImport.profileName(trimmed)
         saveRelay(context, name, parsed.singbox, parsed.xray)
+        DiagnosticReporter.record(context, "import_ok")
         return ImportResult(true, name, "relay", 1)
     }
 

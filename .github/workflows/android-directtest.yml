@@ -1,7 +1,8 @@
 name: android-directtest
 
-# Experimental Direct TCP test package. Mock signalling only — this workflow
-# does not demonstrate TSPU, mobile NAT, or production server reachability.
+# Experimental Direct TCP test package plus allowlisted diagnostic upload.
+# Mock signalling and mock HTTPS ingest tests are not a TSPU proof, and older
+# green Direct TCP results must not be treated as verification of logging.
 # Debug-signed sidecar APK (com.razban.app.directtest). No release keystore,
 # no live coordinator credentials, no default-config secret.
 
@@ -88,12 +89,16 @@ jobs:
             adb logcat -c || true
             adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/logcat-directtest.txt" 2>&1 &
             LOGCAT_PID=$!
-            gradle connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.DirectTcpIntegrationTest
+            gradle connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.DirectTcpIntegrationTest,com.razban.app.DiagnosticUploadTest
             rc=$?
             sleep 2
-            kill "$LOGCAT_PID" 2>/dev/null
+            kill "$LOGCAT_PID" >/dev/null 2>&1 || true
+            wait "$LOGCAT_PID" >/dev/null 2>&1 || true
             echo "gradle rc=$rc"
-            exit $rc
+            if [ "$rc" -eq 0 ]; then
+              exit 0
+            fi
+            exit "$rc"
       - name: Redacted log excerpt
         if: always()
         run: |
@@ -209,3 +214,15 @@ jobs:
         with:
           name: razban-directtest-apk
           path: android/out/Razban-0.1.44-directtest.apk
+
+  ingest-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Live allowlisted ingest smoke
+        run: |
+          python3 tools/diag-ingest/smoke_client.py \
+            --endpoint "https://170.168.119.63:9446" \
+            --ca android/app/src/directtest/assets/diag-ca.pem \
+            --marker "gha-${GITHUB_RUN_ID}"

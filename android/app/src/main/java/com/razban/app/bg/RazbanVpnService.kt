@@ -7,6 +7,7 @@ import android.os.ParcelFileDescriptor
 import com.razban.app.config.ConfigStore
 import com.razban.app.config.ProfileStore
 import com.razban.app.direct.DirectTcpAdapter
+import com.razban.app.diag.DiagnosticReporter
 import io.nekohasekai.libbox.CommandServer
 import io.nekohasekai.libbox.CommandServerHandler
 import io.nekohasekai.libbox.ConnectionOwner
@@ -74,6 +75,8 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     private fun startTunnel() {
         status = Status.Starting
+        val startedAt = System.currentTimeMillis()
+        DiagnosticReporter.record(this, "vpn_start")
         Notifications.startForeground(this)
         // Keep the VpnService's underlying network in sync with the physical
         // (NOT_VPN) network the monitor tracks — required for the core's
@@ -109,14 +112,21 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                         },
                         protectSocket = { s -> protect(s) },
                     )
+                    adapter.onDiagnostic = { stage, error, duration ->
+                        DiagnosticReporter.record(applicationContext, stage, error, duration)
+                    }
                     adapter.start()
                     directAdapter = adapter
                     android.util.Log.d(TAG, "startTunnel: direct adapter up")
                 }
                 if (ConfigStore.hasXray(this@RazbanVpnService)) {
+                    DiagnosticReporter.record(this@RazbanVpnService, "xray_start")
                     val xcfg = ConfigStore.xrayConfig(this@RazbanVpnService)
-                    if (xcfg == null || !XrayProcess.start(this@RazbanVpnService, xcfg))
+                    if (xcfg == null || !XrayProcess.start(this@RazbanVpnService, xcfg)) {
+                        DiagnosticReporter.record(this@RazbanVpnService, "xray_failed", "xray_start_failed")
                         error("xray sidecar failed to start")
+                    }
+                    DiagnosticReporter.record(this@RazbanVpnService, "xray_ok")
                     android.util.Log.d(TAG, "startTunnel: xray sidecar up on 127.0.0.1:${XrayProcess.SOCKS_PORT}")
                 }
 
@@ -140,6 +150,11 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 server.startOrReloadService(config, override)
                 android.util.Log.d(TAG, "startTunnel: service started OK")
                 status = Status.Started
+                DiagnosticReporter.record(
+                    this@RazbanVpnService,
+                    "vpn_started",
+                    durationMs = System.currentTimeMillis() - startedAt,
+                )
                 broadcastStatus()
                 // Subscribe to the core's live status stream → real up/down
                 // numbers for the UI (vpn.stats / throughput bars).
@@ -177,6 +192,18 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "startTunnel FAILED", t)
                 writeDebugMessage("start failed: ${t.message}")
+                val code = when (t.message) {
+                    "no config imported" -> "no_config"
+                    "xray sidecar failed to start" -> "xray_start_failed"
+                    "DirectTCPexperimental selected but runtime config missing" -> "no_config"
+                    else -> "unknown"
+                }
+                DiagnosticReporter.record(
+                    this@RazbanVpnService,
+                    "vpn_failed",
+                    code,
+                    System.currentTimeMillis() - startedAt,
+                )
                 stopTunnel()
             }
         }
@@ -198,6 +225,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     private fun stopTunnel() {
         if (status == Status.Stopping || status == Status.Stopped) return
         status = Status.Stopping
+        DiagnosticReporter.record(this, "vpn_stop")
         scope.launch {
             CoreStatus.onTick = null
             GeoClassifier.stop()

@@ -25,6 +25,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.razban.app.bg.RazbanVpnService
 import com.razban.app.bridge.WebUiBridge
+import com.razban.app.diag.DiagnosticReporter
 import com.razban.app.config.ConfigStore
 import org.json.JSONObject
 
@@ -38,6 +39,7 @@ class WebUiActivity : AppCompatActivity() {
 
     private lateinit var web: WebView
     private lateinit var bridge: WebUiBridge
+    private var diagStatusView: android.widget.TextView? = null
 
     private val vpnConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (it.resultCode == Activity.RESULT_OK) startVpn()
@@ -64,7 +66,7 @@ class WebUiActivity : AppCompatActivity() {
         }
 
         web = WebView(this)
-        setContentView(web)
+        setContentView(wrapWithDiagBar(web))
         WebView.setWebContentsDebuggingEnabled(true)
 
         bridge = WebUiBridge(applicationContext, onConnect = { runOnUiThread { requestConnect() } },
@@ -162,6 +164,65 @@ class WebUiActivity : AppCompatActivity() {
     override fun onDestroy() {
         web.destroy()
         super.onDestroy()
+    }
+
+    private fun wrapWithDiagBar(webView: WebView): android.view.View {
+        if (!com.razban.app.BuildConfig.DIAGNOSTIC_UPLOAD_UI) return webView
+        val root = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        val bar = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            setPadding(32, 20, 32, 20)
+            setBackgroundColor(0xFF1B2A1C.toInt())
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        val status = android.widget.TextView(this).apply {
+            setTextColor(0xFFE8E8E8.toInt())
+            textSize = 13f
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val toggle = android.widget.Switch(this).apply {
+            text = "Диагностика"
+            setTextColor(0xFFE8E8E8.toInt())
+            isChecked = DiagnosticReporter.isEnabled(this@WebUiActivity)
+            setOnCheckedChangeListener { _, checked ->
+                DiagnosticReporter.setEnabled(this@WebUiActivity, checked)
+                refreshDiagStatus()
+            }
+        }
+        diagStatusView = status
+        bar.addView(status)
+        bar.addView(toggle)
+        root.addView(bar, android.widget.LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        root.addView(webView, android.widget.LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
+        ))
+        refreshDiagStatus()
+        webView.post(object : Runnable {
+            override fun run() {
+                refreshDiagStatus()
+                webView.postDelayed(this, 4000)
+            }
+        })
+        return root
+    }
+
+    private fun refreshDiagStatus() {
+        val view = diagStatusView ?: return
+        val st = DiagnosticReporter.statusJson(this)
+        val enabled = st.optBoolean("enabled")
+        val queued = st.optInt("queued")
+        val status = st.optString("status")
+        val err = if (st.isNull("lastError")) "" else st.optString("lastError")
+        view.text = when {
+            !enabled -> "Диагностика: выкл"
+            err.isNotEmpty() && status != "ok" -> "Диагностика: $status · очередь $queued"
+            else -> "Диагностика: $status · очередь $queued"
+        }
     }
 
     private fun requestConnect() {

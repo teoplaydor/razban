@@ -27,6 +27,7 @@ class DirectTcpAdapter(
     val events = CopyOnWriteArrayList<String>()
     @Volatile var lastError: String? = null
         private set
+    var onDiagnostic: ((stage: String, error: String?, durationMs: Long?) -> Unit)? = null
 
     val listenPort: Int get() = listener.localPort
 
@@ -36,6 +37,7 @@ class DirectTcpAdapter(
         worker.set(t)
         t.start()
         events.add("started")
+        diag("direct_start")
         Log.d(TAG, "adapter listening")
     }
 
@@ -55,6 +57,10 @@ class DirectTcpAdapter(
             try { s.shutdownOutput() } catch (_: Exception) {}
             try { s.close() } catch (_: Exception) {}
             events.add("fail_closed")
+            if (reason != "stopped") {
+                val code = if (reason == "no_underlying_network") "no_underlying_network" else "unknown"
+                diag("direct_fail_closed", code)
+            }
         }
     }
 
@@ -75,6 +81,7 @@ class DirectTcpAdapter(
             } ?: continue
             var session: JSONObject? = null
             var direct: Socket? = null
+            val streamStarted = System.currentTimeMillis()
             try {
                 var joined = coordinator.call("join")
                 val waitUntil = System.nanoTime() + 3_000_000_000L
@@ -85,10 +92,12 @@ class DirectTcpAdapter(
                     joined = coordinator.call("join")
                 }
                 events.add("joined")
+                diag("direct_joined")
                 val remotePlan = FixedPlan.from(joined.getJSONObject("plan"))
                 if (remotePlan != profile.plan) throw IllegalStateException("fixed endpoint plan mismatch")
                 session = coordinator.armed(joined)
                 events.add("armed")
+                diag("direct_armed")
                 val epoch = session.getDouble("epoch")
                 DirectTcpRuntime.awaitEpoch(coordinator.clock, epoch)
                 val peer = profile.plan.devicePeer ?: throw IllegalStateException("device_peer")
@@ -100,11 +109,14 @@ class DirectTcpAdapter(
                 )
                 current.set(direct)
                 events.add("connected")
+                diag("direct_connected")
                 DirectTcpRuntime.relayUntilClosed(local, direct, stop)
                 events.add("stream_finished")
+                diag("direct_stream_finished", durationMs = System.currentTimeMillis() - streamStarted)
             } catch (t: Throwable) {
                 lastError = t.javaClass.simpleName
                 events.add("stream_error")
+                diag("direct_stream_error", mapError(t), System.currentTimeMillis() - streamStarted)
                 Log.d(TAG, "stream_error ${t.javaClass.simpleName}")
             } finally {
                 current.set(null)
@@ -117,6 +129,18 @@ class DirectTcpAdapter(
                 }
             }
         }
+    }
+
+    private fun diag(stage: String, error: String? = null, durationMs: Long? = null) {
+        try { onDiagnostic?.invoke(stage, error, durationMs) } catch (_: Exception) {}
+    }
+
+    private fun mapError(t: Throwable): String = when {
+        t is java.util.concurrent.TimeoutException -> "timeout"
+        t.message?.contains("plan mismatch") == true -> "plan_mismatch"
+        t.message?.contains("protect") == true -> "protect_failed"
+        t is java.io.IOException -> "io_error"
+        else -> "unknown"
     }
 
     companion object {

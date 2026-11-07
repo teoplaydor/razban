@@ -14,3 +14,7 @@
 -keep class com.razban.app.direct.** { *; }
 -keep class com.razban.app.config.ProfileStore { *; }
 -keep class com.razban.app.config.ProfileSecrets { *; }
+
+# Diagnostic uploader (allowlisted events only).
+-keep class com.razban.app.diag.** { *;
+}
