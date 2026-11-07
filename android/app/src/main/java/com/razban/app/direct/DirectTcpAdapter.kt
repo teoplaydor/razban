@@ -109,6 +109,10 @@ class DirectTcpAdapter(
     }
 
     private fun handleLocal(local: Socket) {
+            if (events.contains("data_ok")) {
+                relayToKnownPeer(local)
+                return
+            }
             var session: JSONObject? = null
             var direct: Socket? = null
             val streamStarted = System.currentTimeMillis()
@@ -154,12 +158,12 @@ class DirectTcpAdapter(
                 }
                 events.add("stream_finished")
                 diag("direct_stream_finished", durationMs = System.currentTimeMillis() - streamStarted)
-                if (!stop.get() && live.size <= 1) channel(DirectChannelState.Error)
+                if (!stop.get() && live.none { it !== direct }) channel(DirectChannelState.Error)
             } catch (t: Throwable) {
                 lastError = t.javaClass.simpleName
                 events.add("stream_error")
                 diag("direct_stream_error", mapError(t), System.currentTimeMillis() - streamStarted)
-                if (!stop.get() && live.size <= 1) channel(DirectChannelState.Error)
+                if (!stop.get() && live.none { it !== direct }) channel(DirectChannelState.Error)
                 Log.d(TAG, "stream_error ${t.javaClass.simpleName}")
             } finally {
                 if (direct != null) live.remove(direct)
@@ -172,6 +176,47 @@ class DirectTcpAdapter(
                     }
                 }
             }
+    }
+
+    private fun relayToKnownPeer(local: Socket) {
+        val streamStarted = System.currentTimeMillis()
+        var direct: Socket? = null
+        try {
+            val peer = profile.plan.devicePeer ?: throw IllegalStateException("device_peer")
+            direct = sockets.open(
+                InetSocketAddress(peer.host, peer.port),
+                localBind = profile.plan.deviceBind,
+                timeoutMs = DirectTcpRuntime.CONNECT_TIMEOUT_MS,
+                connect = true,
+            )
+            current.set(direct)
+            live.add(direct)
+            events.add("connected")
+            diag("direct_connected")
+            var probed = false
+            DirectTcpRuntime.relayUntilClosed(local, direct, stop) { up, down ->
+                if (!probed && up > 0 && down > 0) {
+                    probed = true
+                    events.add("data_ok")
+                    diag("direct_data_ok")
+                    channel(DirectChannelState.DataWorking)
+                }
+            }
+            events.add("stream_finished")
+            diag("direct_stream_finished", durationMs = System.currentTimeMillis() - streamStarted)
+            if (!stop.get() && live.none { it !== direct }) channel(DirectChannelState.Error)
+        } catch (t: Throwable) {
+            lastError = t.javaClass.simpleName
+            events.add("stream_error")
+            diag("direct_stream_error", mapError(t), System.currentTimeMillis() - streamStarted)
+            if (!stop.get() && live.none { it !== direct }) channel(DirectChannelState.Error)
+            Log.d(TAG, "stream_error ${t.javaClass.simpleName}")
+        } finally {
+            if (direct != null) live.remove(direct)
+            current.compareAndSet(direct, null)
+            try { direct?.close() } catch (_: Exception) {}
+            try { local.close() } catch (_: Exception) {}
+        }
     }
 
     private fun diag(stage: String, error: String? = null, durationMs: Long? = null) {
