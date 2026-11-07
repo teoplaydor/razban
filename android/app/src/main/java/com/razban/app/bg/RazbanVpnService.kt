@@ -375,15 +375,22 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         // libbox surfaces them back through TunOptions too).
         options.includePackage.let { while (it.hasNext()) tryAddAllowed(builder, it.next()) }
         options.excludePackage.let { while (it.hasNext()) tryAddDisallowed(builder, it.next()) }
-        // xray sidecar mode: exclude our own app from the TUN so xray's socket to
-        // the server egresses on the physical NIC instead of looping back in.
-        if (ConfigStore.hasXray(this)) tryAddDisallowed(builder, packageName)
-        // NOTE: we intentionally do NOT exclude our own package. The command
-        // channel is a unix socket (not network), so it isn't captured by the
-        // TUN, and routing our own update/probe traffic through the tunnel is
-        // fine for a privacy tool. (When byedpi is bundled later it gets its
-        // own process-name/uid exclusion — see TODO.) Keeping self IN the tun
-        // is also what lets the instrumented VPN test generate routable traffic.
+        // xray sidecar mode: exclude our own app from the TUN so xray's socket
+        // to the server egresses on the physical NIC instead of looping back in.
+        // Also exclude the instrumented test package if it is installed: the
+        // CI fixture VLESS server is started from that UID and must egress
+        // like the isolated DE edge (which is not behind this TUN). Capturing
+        // it hairpins freedom outbounds into the single mux parent and stalls
+        // SOCKS to the local origin even when the channel is DataWorking.
+        // Missing package is ignored by tryAddDisallowed.
+        if (ConfigStore.hasXray(this)) {
+            tryAddDisallowed(builder, packageName)
+            tryAddDisallowed(builder, "$packageName.test")
+        }
+        // NOTE: when xray is not running we intentionally do NOT exclude our
+        // own package. The command channel is a unix socket (not network), so
+        // it isn't captured by the TUN, and routing our own update/probe
+        // traffic through the tunnel is fine for a privacy tool.
 
         val pfd = builder.establish() ?: error("VpnService.Builder.establish() returned null")
         tunFd = pfd
