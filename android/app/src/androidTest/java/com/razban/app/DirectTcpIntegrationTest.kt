@@ -4,8 +4,13 @@ import android.content.Context
 import android.net.ConnectivityManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.core.content.FileProvider
+import com.razban.app.bg.RazbanVpnService
 import com.razban.app.bridge.WebUiBridge
+import com.razban.app.config.ConfigStore
+import com.razban.app.config.ProfileImport
 import com.razban.app.config.ProfileStore
+import com.razban.app.config.ProfileSwitch
 import com.razban.app.direct.DirectProfile
 import com.razban.app.direct.DirectTcpAdapter
 import com.razban.app.direct.DirectTcpCoordinator
@@ -115,6 +120,7 @@ class DirectTcpIntegrationTest {
 
     @After
     fun teardown() {
+        RazbanVpnService.lastStatus = RazbanVpnService.Status.Stopped
         cleanup.asReversed().forEach { run -> try { run() } catch (_: Exception) {} }
         cleanup.clear()
     }
@@ -158,6 +164,83 @@ class DirectTcpIntegrationTest {
 
         val listJson = rpc(bridge, replies, "profiles.list", null).getJSONObject("result")
         assertEquals(2, listJson.getJSONArray("profiles").length())
+        assertFalse(listJson.toString().contains(deviceKey))
+        assertFalse(listJson.toString().contains("BEGIN CERTIFICATE"))
+        assertFalse(listJson.toString().contains("11111111-2222-3333-4444-555555555555"))
+    }
+
+    @Test
+    fun importDirectJsonFromFileAndSwitchCycle() {
+        val replies = Collections.synchronizedList(ArrayList<String>())
+        val bridge = WebUiBridge(ctx, {}, {})
+        bridge.deliver = { s -> replies.add(s) }
+        val relayLink =
+            "vless://11111111-2222-3333-4444-555555555555@198.51.100.7:443" +
+                "?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com" +
+                "&fp=chrome&pbk=AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKK0&sid=0123456789abcdef&type=tcp#RelayBaseline"
+        assertTrue(rpc(bridge, replies, "servers.add", JSONObject().put("uri", relayLink)).optJSONObject("result")?.optInt("count") == 1)
+
+        val deviceKey = SignalCodec.randomHex(32)
+        val directDoc = sampleDirectDoc("https://192.0.2.10:9444/v1/session", deviceKey, "192.0.2.20")
+        val file = File(ctx.cacheDir, "mock-direct-tcp.json")
+        file.writeText(directDoc)
+        val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", file)
+        val imported = ProfileImport.fromUri(ctx, uri)
+        assertTrue("file import failed: ${imported.error}", imported.ok)
+        assertEquals(DirectProfile.DEFAULT_NAME, imported.name)
+        assertEquals(DirectProfile.KIND, imported.kind)
+        assertTrue(ProfileStore.isDirectActive(ctx))
+        val listed = ProfileStore.listJson(ctx).toString()
+        assertFalse(listed.contains(deviceKey))
+        assertFalse(listed.contains("BEGIN PRIVATE KEY"))
+
+        assertTrue(ProfileStore.select(ctx, "RelayBaseline"))
+        assertFalse(ProfileStore.isDirectActive(ctx))
+        assertFalse(File(ctx.filesDir, "direct-config.json").exists())
+
+        assertTrue(ProfileStore.select(ctx, DirectProfile.DEFAULT_NAME))
+        assertTrue(ProfileStore.isDirectActive(ctx))
+        assertTrue(File(ctx.filesDir, "direct-config.json").exists())
+
+        ConfigStore.importConfig(ctx, """{"outbounds":[{"type":"direct","tag":"direct"}]}""")
+        ProfileStore.recordRedeemedRelay(ctx)
+        assertEquals("RelayBaseline", ProfileStore.activeName(ctx))
+        assertFalse(ProfileStore.isDirectActive(ctx))
+        assertFalse(File(ctx.filesDir, "direct-config.json").exists())
+        assertFalse(ConfigStore.hasXray(ctx))
+
+        assertTrue(ProfileStore.select(ctx, DirectProfile.DEFAULT_NAME))
+        assertTrue(ProfileStore.isDirectActive(ctx))
+    }
+
+    @Test
+    fun selectWhileConnectedDoesNotClaimSuccess() {
+        val replies = Collections.synchronizedList(ArrayList<String>())
+        val bridge = WebUiBridge(ctx, {}, {})
+        bridge.deliver = { s -> replies.add(s) }
+        val relayLink =
+            "vless://11111111-2222-3333-4444-555555555555@198.51.100.7:443" +
+                "?encryption=none&security=reality&sni=www.microsoft.com&type=tcp#RelayBaseline"
+        rpc(bridge, replies, "servers.add", JSONObject().put("uri", relayLink))
+        val deviceKey = SignalCodec.randomHex(32)
+        rpc(bridge, replies, "servers.add", JSONObject().put("text", sampleDirectDoc("https://192.0.2.10:9444/v1/session", deviceKey, "192.0.2.20")))
+        assertEquals(DirectProfile.DEFAULT_NAME, ProfileStore.activeName(ctx))
+        assertTrue(ProfileStore.isDirectActive(ctx))
+
+        RazbanVpnService.lastStatus = RazbanVpnService.Status.Started
+        val blocked = rpc(bridge, replies, "profiles.select", JSONObject().put("name", "RelayBaseline"))
+        val result = blocked.getJSONObject("result")
+        assertFalse(result.optBoolean("ok"))
+        assertEquals(ProfileSwitch.DISCONNECT_REQUIRED, result.optString("error"))
+        assertEquals(DirectProfile.DEFAULT_NAME, result.optString("active"))
+        assertEquals(DirectProfile.DEFAULT_NAME, ProfileStore.activeName(ctx))
+        assertTrue(ProfileStore.isDirectActive(ctx))
+
+        RazbanVpnService.lastStatus = RazbanVpnService.Status.Stopped
+        val ok = rpc(bridge, replies, "profiles.select", JSONObject().put("name", "RelayBaseline"))
+        assertTrue(ok.getJSONObject("result").optBoolean("ok"))
+        assertEquals("RelayBaseline", ProfileStore.activeName(ctx))
+        assertFalse(ProfileStore.isDirectActive(ctx))
     }
 
     @Test

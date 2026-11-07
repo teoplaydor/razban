@@ -5,6 +5,7 @@ import android.webkit.JavascriptInterface
 import com.razban.app.bg.RazbanVpnService
 import com.razban.app.config.ConfigStore
 import com.razban.app.config.ProfileStore
+import com.razban.app.config.ProfileSwitch
 import com.razban.app.diag.DiagnosticReporter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -109,9 +110,16 @@ class WebUiBridge(
                 is String -> params
                 else -> ""
             }
-            val ok = name.isNotEmpty() && ProfileStore.select(ctx, name)
-            if (ok) pushEvent("servers.changed", true)
-            JSONObject().put("ok", ok).put("active", ProfileStore.activeName(ctx) ?: JSONObject.NULL)
+            if (ProfileSwitch.blockedByTunnel(RazbanVpnService.lastStatus.name)) {
+                JSONObject()
+                    .put("ok", false)
+                    .put("error", ProfileSwitch.DISCONNECT_REQUIRED)
+                    .put("active", ProfileStore.activeName(ctx) ?: JSONObject.NULL)
+            } else {
+                val ok = name.isNotEmpty() && ProfileStore.select(ctx, name)
+                if (ok) pushEvent("servers.changed", true)
+                JSONObject().put("ok", ok).put("active", ProfileStore.activeName(ctx) ?: JSONObject.NULL)
+            }
         }
         "bundles.list" -> bundlesJson()
         // Live per-protocol health for the bundle card. We don't have the admin
@@ -143,12 +151,23 @@ class WebUiBridge(
                 is String -> params
                 else -> ""
             }
+            val wasDirect = ProfileStore.isDirectActive(ctx)
             val n = com.razban.app.bg.CoreCode.redeem(ctx, code)
-            if (RazbanVpnService.lastStatus == RazbanVpnService.Status.Started)
+            val connected = ProfileSwitch.blockedByTunnel(RazbanVpnService.lastStatus.name)
+            // reload() only swaps sing-box JSON. Switching away from Direct
+            // while connected would leave the adapter/sidecar running, so ask
+            // the user to disconnect instead of reporting a live switch.
+            val requiresReconnect = connected && wasDirect
+            if (connected && !wasDirect) {
                 ctx.startService(android.content.Intent(ctx, RazbanVpnService::class.java)
                     .setAction(RazbanVpnService.ACTION_RELOAD))
+            }
             pushEvent("servers.changed", true)
-            JSONObject().put("ok", true).put("outbounds", n)
+            JSONObject()
+                .put("ok", true)
+                .put("outbounds", n)
+                .put("active", ProfileStore.activeName(ctx) ?: JSONObject.NULL)
+                .put("requiresReconnect", requiresReconnect)
         }
 
         // The Servers page "Из буфера" button calls servers.addMany({text}).

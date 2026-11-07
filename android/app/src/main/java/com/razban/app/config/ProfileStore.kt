@@ -108,6 +108,18 @@ object ProfileStore {
         File(context.filesDir, DIRECT_ACTIVE).delete()
     }
 
+    /**
+     * Persist a server-by-code (or any ordinary sing-box) import as RelayBaseline
+     * and drop a leftover Direct TCP runtime file so the next connect cannot
+     * keep using the previous direct-config / xray sidecar.
+     */
+    fun recordRedeemedRelay(context: Context, name: String = RELAY_BASELINE) {
+        ConfigStore.setXrayConfig(context, null)
+        val stored = File(context.filesDir, "current-config.json")
+        val singbox = if (stored.exists()) stored.readText() else return
+        saveRelay(context, name.ifBlank { RELAY_BASELINE }, singbox, null)
+    }
+
     fun saveDirect(context: Context, profile: DirectProfile) {
         val safe = safeName(profile.name.ifBlank { DIRECT_TCP })
         val folder = folder(context, safe)

@@ -27,6 +27,9 @@ import com.razban.app.bg.RazbanVpnService
 import com.razban.app.bridge.WebUiBridge
 import com.razban.app.diag.DiagnosticReporter
 import com.razban.app.config.ConfigStore
+import com.razban.app.config.ProfileImport
+import com.razban.app.config.ProfileStore
+import com.razban.app.config.ProfileSwitch
 import org.json.JSONObject
 
 /**
@@ -40,6 +43,19 @@ class WebUiActivity : AppCompatActivity() {
     private lateinit var web: WebView
     private lateinit var bridge: WebUiBridge
     private var diagStatusView: android.widget.TextView? = null
+    private var profileSpinner: android.widget.Spinner? = null
+    private var profileLabel: android.widget.TextView? = null
+    private var suppressProfileCallback = false
+
+    private val openProfileDocument = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) {
+            android.widget.Toast.makeText(this, "Импорт файла отменён", android.widget.Toast.LENGTH_SHORT).show()
+            return@registerForActivityResult
+        }
+        finishDocumentImport(uri)
+    }
 
     private val vpnConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (it.resultCode == Activity.RESULT_OK) startVpn()
@@ -66,7 +82,7 @@ class WebUiActivity : AppCompatActivity() {
         }
 
         web = WebView(this)
-        setContentView(wrapWithDiagBar(web))
+        setContentView(wrapWithChrome(web))
         WebView.setWebContentsDebuggingEnabled(true)
 
         bridge = WebUiBridge(applicationContext, onConnect = { runOnUiThread { requestConnect() } },
@@ -116,6 +132,7 @@ class WebUiActivity : AppCompatActivity() {
         }
 
         web.loadUrl("https://appassets.androidplatform.net/webui/index.html")
+        handleLaunchImport(intent)
 
         // NO auto-connect. The tunnel must come up ONLY on an explicit user tap of
         // the Connect button (which arrives as the `onConnect` callback →
@@ -141,6 +158,13 @@ class WebUiActivity : AppCompatActivity() {
         // bundle), auto-import it. Runs only while config is absent, so the
         // clipboard isn't re-read (and no repeated "pasted" toast) afterwards.
         web.postDelayed({ maybeImportConfigFromClipboard() }, 700)
+        refreshProfileBar()
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLaunchImport(intent)
     }
 
     private fun maybeImportConfigFromClipboard() {
@@ -148,7 +172,17 @@ class WebUiActivity : AppCompatActivity() {
         try {
             val cm = getSystemService(android.content.ClipboardManager::class.java) ?: return
             val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim() ?: return
-            if (!text.startsWith("{") || !text.contains("\"outbounds\"")) return
+            if (!text.startsWith("{")) return
+            if (text.contains("\"razbanProfile\"")) {
+                val imported = ProfileStore.importPayload(this, text)
+                if (imported.ok) {
+                    android.widget.Toast.makeText(this, "Импортирован профиль ${imported.name}", android.widget.Toast.LENGTH_LONG).show()
+                    bridge.pushEvent("servers.changed", true)
+                    refreshProfileBar()
+                }
+                return
+            }
+            if (!text.contains("\"outbounds\"")) return
             ConfigStore.importConfig(this, text)
             android.widget.Toast.makeText(this, "Конфигурация импортирована из буфера", android.widget.Toast.LENGTH_LONG).show()
             bridge.pushEvent("vpn.log", "Конфигурация импортирована из буфера")
@@ -166,11 +200,31 @@ class WebUiActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    private fun wrapWithDiagBar(webView: WebView): android.view.View {
-        if (!com.razban.app.BuildConfig.DIAGNOSTIC_UPLOAD_UI) return webView
+    private fun wrapWithChrome(webView: WebView): android.view.View {
+        val wantDiag = com.razban.app.BuildConfig.DIAGNOSTIC_UPLOAD_UI
+        val wantNative = com.razban.app.BuildConfig.DEBUG || wantDiag
+        if (!wantNative) return webView
         val root = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
         }
+        root.addView(buildProfileBar())
+        if (wantDiag) root.addView(buildDiagBar())
+        root.addView(webView, android.widget.LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
+        ))
+        refreshProfileBar()
+        refreshDiagStatus()
+        webView.post(object : Runnable {
+            override fun run() {
+                refreshProfileBar()
+                refreshDiagStatus()
+                webView.postDelayed(this, 2000)
+            }
+        })
+        return root
+    }
+
+    private fun buildDiagBar(): android.view.View {
         val bar = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
             setPadding(32, 20, 32, 20)
@@ -194,21 +248,130 @@ class WebUiActivity : AppCompatActivity() {
         diagStatusView = status
         bar.addView(status)
         bar.addView(toggle)
-        root.addView(bar, android.widget.LinearLayout.LayoutParams(
-            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-        ))
-        root.addView(webView, android.widget.LinearLayout.LayoutParams(
-            android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
-        ))
-        refreshDiagStatus()
-        webView.post(object : Runnable {
-            override fun run() {
-                refreshDiagStatus()
-                webView.postDelayed(this, 4000)
+        return bar
+    }
+
+    private fun buildProfileBar(): android.view.View {
+        val bar = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            setPadding(32, 18, 24, 18)
+            setBackgroundColor(0xFF152033.toInt())
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        val label = android.widget.TextView(this).apply {
+            setTextColor(0xFFE8E8E8.toInt())
+            textSize = 13f
+            text = "Профиль: не выбран"
+        }
+        val spinner = android.widget.Spinner(this).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val fileBtn = android.widget.Button(this).apply {
+            text = "Из файла"
+            textSize = 12f
+            isAllCaps = false
+            setOnClickListener {
+                openProfileDocument.launch(arrayOf(
+                    "application/json",
+                    "text/plain",
+                    "text/*",
+                    "application/octet-stream",
+                ))
             }
-        })
-        return root
+        }
+        profileLabel = label
+        profileSpinner = spinner
+        spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                if (suppressProfileCallback) return
+                val name = parent?.getItemAtPosition(position) as? String ?: return
+                if (name.isBlank() || name == "Нет профилей") return
+                if (name == ProfileStore.activeName(this@WebUiActivity)) return
+                if (ProfileSwitch.blockedByTunnel(RazbanVpnService.lastStatus.name)) {
+                    android.widget.Toast.makeText(
+                        this@WebUiActivity,
+                        "Сначала отключите VPN, чтобы сменить профиль",
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                    refreshProfileBar()
+                    return
+                }
+                val ok = ProfileStore.select(this@WebUiActivity, name)
+                if (ok && this@WebUiActivity::bridge.isInitialized) {
+                    bridge.pushEvent("servers.changed", true)
+                }
+                refreshProfileBar()
+                if (!ok) {
+                    android.widget.Toast.makeText(this@WebUiActivity, "Не удалось выбрать профиль", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+        bar.addView(label)
+        bar.addView(spinner)
+        bar.addView(fileBtn)
+        return bar
+    }
+
+    private fun refreshProfileBar() {
+        val spinner = profileSpinner ?: return
+        val names = ProfileStore.list(this).map { it.name }
+        val active = ProfileStore.activeName(this)
+        val display = if (names.isEmpty()) listOf("Нет профилей") else names
+        val adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, display)
+        suppressProfileCallback = true
+        spinner.adapter = adapter
+        val idx = names.indexOf(active)
+        if (idx >= 0) spinner.setSelection(idx)
+        suppressProfileCallback = false
+        val kind = ProfileStore.list(this).firstOrNull { it.name == active }?.kind
+        profileLabel?.text = when {
+            active != null && kind != null -> "Профиль: $active"
+            active != null -> "Профиль: $active"
+            else -> "Профиль: не выбран"
+        }
+    }
+
+    private fun handleLaunchImport(intent: android.content.Intent?) {
+        if (intent == null) return
+        val action = intent.action ?: return
+        val uri = when (action) {
+            android.content.Intent.ACTION_VIEW -> intent.data
+            android.content.Intent.ACTION_SEND -> {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM)
+                }
+            }
+            else -> null
+        }
+        val extraText = if (action == android.content.Intent.ACTION_SEND) {
+            intent.getStringExtra(android.content.Intent.EXTRA_TEXT)
+        } else null
+        when {
+            uri != null -> finishDocumentImport(uri)
+            !extraText.isNullOrBlank() -> applyImportResult(ProfileImport.fromText(this, extraText), "отправки")
+        }
+    }
+
+    private fun finishDocumentImport(uri: android.net.Uri) {
+        applyImportResult(ProfileImport.fromUri(this, uri), "файла")
+    }
+
+    private fun applyImportResult(result: ProfileStore.ImportResult, source: String) {
+        if (result.ok) {
+            android.widget.Toast.makeText(this, "Импортирован профиль ${result.name}", android.widget.Toast.LENGTH_LONG).show()
+            if (this::bridge.isInitialized) bridge.pushEvent("servers.changed", true)
+            refreshProfileBar()
+        } else {
+            android.widget.Toast.makeText(
+                this,
+                "Не удалось импортировать из $source (${result.error ?: "ошибка"})",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun refreshDiagStatus() {
