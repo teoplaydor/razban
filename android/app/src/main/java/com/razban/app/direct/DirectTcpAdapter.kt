@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -24,6 +25,8 @@ class DirectTcpAdapter(
     private val stop = AtomicBoolean(false)
     private val worker = AtomicReference<Thread>()
     private val current = AtomicReference<Socket>()
+    private val live = CopyOnWriteArrayList<Socket>()
+    private val inflight = Semaphore(4)
     val events = CopyOnWriteArrayList<String>()
     @Volatile var lastError: String? = null
         private set
@@ -52,11 +55,17 @@ class DirectTcpAdapter(
 
     fun failClosed(reason: String) {
         lastError = reason
-        val s = current.getAndSet(null)
-        if (s != null) {
+        current.set(null)
+        val closing = live.toList()
+        live.clear()
+        var any = false
+        for (s in closing) {
+            any = true
             try { s.shutdownInput() } catch (_: Exception) {}
             try { s.shutdownOutput() } catch (_: Exception) {}
             try { s.close() } catch (_: Exception) {}
+        }
+        if (any) {
             events.add("fail_closed")
             if (reason != "stopped") {
                 val code = if (reason == "no_underlying_network") "no_underlying_network" else "unknown"
@@ -67,8 +76,10 @@ class DirectTcpAdapter(
 
     fun closeCurrent(forced: Boolean = false) {
         if (forced) events.add("forced_disconnect") else events.add("shutdown_current")
-        val s = current.getAndSet(null)
-        if (s != null) {
+        current.set(null)
+        val closing = live.toList()
+        live.clear()
+        for (s in closing) {
             try { s.close() } catch (_: Exception) {}
         }
     }
@@ -80,6 +91,24 @@ class DirectTcpAdapter(
             } catch (_: InterruptedException) {
                 continue
             } ?: continue
+            if (!inflight.tryAcquire()) {
+                if (!listener.pending.offer(local)) {
+                    try { local.close() } catch (_: Exception) {}
+                    events.add("queue_full_rejected")
+                }
+                continue
+            }
+            Thread {
+                try {
+                    handleLocal(local)
+                } finally {
+                    inflight.release()
+                }
+            }.apply { isDaemon = true; name = "razban-direct-stream" }.start()
+        }
+    }
+
+    private fun handleLocal(local: Socket) {
             var session: JSONObject? = null
             var direct: Socket? = null
             val streamStarted = System.currentTimeMillis()
@@ -110,6 +139,7 @@ class DirectTcpAdapter(
                     connect = true,
                 )
                 current.set(direct)
+                live.add(direct)
                 events.add("connected")
                 diag("direct_connected")
                 channel(DirectChannelState.TcpConnected)
@@ -124,15 +154,16 @@ class DirectTcpAdapter(
                 }
                 events.add("stream_finished")
                 diag("direct_stream_finished", durationMs = System.currentTimeMillis() - streamStarted)
-                if (!stop.get()) channel(DirectChannelState.Error)
+                if (!stop.get() && live.size <= 1) channel(DirectChannelState.Error)
             } catch (t: Throwable) {
                 lastError = t.javaClass.simpleName
                 events.add("stream_error")
                 diag("direct_stream_error", mapError(t), System.currentTimeMillis() - streamStarted)
-                if (!stop.get()) channel(DirectChannelState.Error)
+                if (!stop.get() && live.size <= 1) channel(DirectChannelState.Error)
                 Log.d(TAG, "stream_error ${t.javaClass.simpleName}")
             } finally {
-                current.set(null)
+                if (direct != null) live.remove(direct)
+                current.compareAndSet(direct, null)
                 try { direct?.close() } catch (_: Exception) {}
                 try { local.close() } catch (_: Exception) {}
                 if (session != null && session.has("session")) {
@@ -141,7 +172,6 @@ class DirectTcpAdapter(
                     }
                 }
             }
-        }
     }
 
     private fun diag(stage: String, error: String? = null, durationMs: Long? = null) {

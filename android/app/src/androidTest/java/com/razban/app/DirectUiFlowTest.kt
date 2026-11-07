@@ -1,6 +1,7 @@
 package com.razban.app
 
 import android.content.Intent
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -51,6 +52,7 @@ class DirectUiFlowTest {
     fun teardown() {
         cleanup.asReversed().forEach { runCatching { it() } }
         File(appCtx.getExternalFilesDir(null), "e2e-report.txt").writeText(report.toString())
+        Log.i("razban-direct", "e2e-report\n$report")
     }
 
     @Test(timeout = 180_000)
@@ -157,9 +159,15 @@ class DirectUiFlowTest {
         report.appendLine("data_working=$sawData (TUN-up-alone is not success)")
 
         // Explicit SOCKS transport check (app UID → 127.0.0.1:10808). Not a TUN proof.
-        val socks = runCatching {
-            SocksHttpProbe.httpGet("127.0.0.1", 10808, "127.0.0.1", origin.port, "/")
-        }.getOrNull()
+        var socks: SocksHttpProbe.Result? = null
+        val socksUntil = System.currentTimeMillis() + 15_000
+        while (System.currentTimeMillis() < socksUntil) {
+            socks = runCatching {
+                SocksHttpProbe.httpGet("127.0.0.1", 10808, "127.0.0.1", origin.port, "/", 5000)
+            }.getOrNull()
+            if (socks?.ok == true && socks.status == 200) break
+            Thread.sleep(400)
+        }
         val socksOk = socks?.ok == true && socks.status == 200
         report.appendLine("transport_socks=${if (socksOk) "ok" else "fail"} viaSocks=${socks?.viaSocks} status=${socks?.status} err=${socks?.error}")
         report.appendLine("peer_kind=${if (xrayServer.port > 0) "xray-tls" else "raw-http"} peer_port=$dataPeerPort origin_port=${origin.port}")

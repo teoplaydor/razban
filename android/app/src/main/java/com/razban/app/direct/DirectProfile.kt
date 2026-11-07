@@ -115,7 +115,7 @@ data class DirectProfile(
                 .put("disableSystemRoot", true)
                 .put("certificates", JSONArray().put(JSONObject().put("usage", "verify").put("certificate", certLines)))
             val stream = JSONObject().put("network", "tcp").put("security", "tls").put("tlsSettings", tls)
-            val mux = JSONObject().put("enabled", true).put("concurrency", 1)
+            val mux = JSONObject().put("enabled", true).put("concurrency", 8)
                 .put("xudpConcurrency", -1).put("xudpProxyUDP443", "reject")
             val outbound = JSONObject().put("protocol", "vless")
                 .put("settings", JSONObject().put("vnext", JSONArray().put(vnext)))
