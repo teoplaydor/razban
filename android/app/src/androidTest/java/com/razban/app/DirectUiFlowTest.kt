@@ -266,28 +266,28 @@ class DirectUiFlowTest {
 
     /** Shell uid 2000 HTTP via TUN to 198.51.100.10 (not loopback, not app UID). */
     private fun tunHttpExchange(port: Int, method: String, path: String, body: String, expect: String): TunHttpResult {
-        // API 30 UiDevice.executeShellCommand uses Runtime.exec(String), which
-        // tokenizes on whitespace and does not run a shell. A quoted
-        // `printf '...' | nc` therefore never invokes nc (CI returned "'GET").
-        // Write the request and a tiny script, copy them as root into
-        // /data/local/tmp, then `sh script` as uid 2000 (no spaces to split).
+        // API 30 UiDevice.executeShellCommand uses Runtime.exec(String) and
+        // drops stderr. A one-line `printf | nc` never reaches a shell, and a
+        // separate request file copied by su stayed mode 0600 root so uid 2000
+        // could not read it (nc never ran; tun_hits stayed 0). Embed the
+        // request in a script, chmod it world-readable, and exec 2>&1.
         val extra = if (body.isNotEmpty()) "Content-Length: ${body.length}\r\n" else ""
         val payload = "$method $path HTTP/1.0\r\nHost: tun-probe\r\n${extra}\r\n$body"
+        check(!payload.contains('\'')) { "TUN probe payload cannot contain single quotes" }
         val tag = "${method.lowercase()}-${path.trim('/').ifEmpty { "root" }}"
         val dir = File(appCtx.cacheDir, "tun-http").apply { check(mkdirs() || isDirectory) { "missing $absolutePath" } }
-        val localReq = File(dir, "razban-$tag.req")
         val localSh = File(dir, "razban-$tag.sh")
-        localReq.writeBytes(payload.toByteArray(Charsets.ISO_8859_1))
-        val remoteReq = "/data/local/tmp/razban-$tag.req"
         val remoteSh = "/data/local/tmp/razban-$tag.sh"
-        localSh.writeText("#!/system/bin/sh\ntoybox nc -w 8 198.51.100.10 $port < $remoteReq 2>&1\n")
-        val cpReq = device.executeShellCommand("su 0 cp ${localReq.absolutePath} $remoteReq") ?: ""
+        localSh.writeText(
+            "#!/system/bin/sh\nexec 2>&1\nprintf '%s' '$payload' | toybox nc -w 8 198.51.100.10 $port\n"
+        )
         val cpSh = device.executeShellCommand("su 0 cp ${localSh.absolutePath} $remoteSh") ?: ""
         val chmod = device.executeShellCommand("su 0 chmod 0755 $remoteSh") ?: ""
-        var last = TunHttpResult(false, "cpReq=${cpReq.take(80)} cpSh=${cpSh.take(80)} chmod=${chmod.take(40)}")
+        val ls = device.executeShellCommand("ls -l $remoteSh") ?: ""
+        var last = TunHttpResult(false, "cpSh=${cpSh.take(80)} chmod=${chmod.take(40)} ls=$ls")
         repeat(3) {
             val out = device.executeShellCommand("sh $remoteSh") ?: ""
-            last = TunHttpResult(out.contains(expect), "cpReq=${cpReq.take(40)} chmod=${chmod.take(20)} out=$out")
+            last = TunHttpResult(out.contains(expect), "ls=$ls out=$out")
             if (last.ok) return last
             Thread.sleep(400)
         }
