@@ -61,11 +61,11 @@ class DirectTcpRuntimeTest {
         try {
             listener.startAccept()
             val port = listener.localPort
-            repeat(6) {
+            repeat(3) {
                 peers.add(Socket().apply { connect(InetSocketAddress("127.0.0.1", port), 1000) })
                 Thread.sleep(40)
             }
-            assertEquals(4, listener.pending.size)
+            assertEquals(1, listener.pending.size)
             assertTrue(listener.events.contains("queue_full_rejected"))
         } finally {
             peers.forEach { try { it.close() } catch (_: Exception) {} }

@@ -115,7 +115,9 @@ data class DirectProfile(
                 .put("disableSystemRoot", true)
                 .put("certificates", JSONArray().put(JSONObject().put("usage", "verify").put("certificate", certLines)))
             val stream = JSONObject().put("network", "tcp").put("security", "tls").put("tlsSettings", tls)
-            val mux = JSONObject().put("enabled", true).put("concurrency", 16)
+            // One physical VLESS parent — the DE edge only active-opens the planned
+            // 4-tuple and does not accept extra ordinary/ephemeral connects.
+            val mux = JSONObject().put("enabled", true).put("concurrency", 32)
                 .put("xudpConcurrency", -1).put("xudpProxyUDP443", "reject")
             val outbound = JSONObject().put("protocol", "vless")
                 .put("settings", JSONObject().put("vnext", JSONArray().put(vnext)))

@@ -151,7 +151,7 @@ object DirectTcpRuntime {
     }
 }
 
-/** A few accepted local streams may queue while relays start; extras are rejected. */
+/** One accepted local stream plus one queued stream; extras are rejected. */
 class BoundedLocalListener(port: Int = 0) {
     private val listener = ServerSocket().apply {
         reuseAddress = true
@@ -159,7 +159,7 @@ class BoundedLocalListener(port: Int = 0) {
         soTimeout = 200
     }
     val localPort: Int get() = listener.localPort
-    val pending = ArrayBlockingQueue<Socket>(4)
+    val pending = ArrayBlockingQueue<Socket>(1)
     val events = CopyOnWriteArrayList<String>()
     private val threads = ArrayList<Thread>()
     private val stop = AtomicBoolean(false)

@@ -5,14 +5,17 @@ import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Lifecycle-owned loopback adapter: stock Xray (TLS+MUX) dials 127.0.0.1:adapterPort;
- * each accepted stream negotiates a new direct TCP channel and byte-bridges it.
- * No custom multiplexer and no automatic fallback to the relay profile.
+ * Lifecycle-owned loopback adapter: stock Xray (TLS+MUX) dials 127.0.0.1:adapterPort.
+ * One accepted mux parent is bridged to one double-active-open data TCP using
+ * the plan bind and device peer (the DE 4-tuple). The DE edge only active-opens
+ * that planned tuple — it does not listen for extra ordinary connects, and a
+ * second simultaneous bind of the same local port cannot exist. Extra Xray
+ * parent dials are therefore not connected out; the next remote TCP is opened
+ * only after the current stream finishes and a new signalling round completes.
  */
 class DirectTcpAdapter(
     private val profile: DirectProfile,
@@ -25,8 +28,6 @@ class DirectTcpAdapter(
     private val stop = AtomicBoolean(false)
     private val worker = AtomicReference<Thread>()
     private val current = AtomicReference<Socket>()
-    private val live = CopyOnWriteArrayList<Socket>()
-    private val inflight = Semaphore(4)
     val events = CopyOnWriteArrayList<String>()
     @Volatile var lastError: String? = null
         private set
@@ -55,17 +56,11 @@ class DirectTcpAdapter(
 
     fun failClosed(reason: String) {
         lastError = reason
-        current.set(null)
-        val closing = live.toList()
-        live.clear()
-        var any = false
-        for (s in closing) {
-            any = true
+        val s = current.getAndSet(null)
+        if (s != null) {
             try { s.shutdownInput() } catch (_: Exception) {}
             try { s.shutdownOutput() } catch (_: Exception) {}
             try { s.close() } catch (_: Exception) {}
-        }
-        if (any) {
             events.add("fail_closed")
             if (reason != "stopped") {
                 val code = if (reason == "no_underlying_network") "no_underlying_network" else "unknown"
@@ -76,10 +71,8 @@ class DirectTcpAdapter(
 
     fun closeCurrent(forced: Boolean = false) {
         if (forced) events.add("forced_disconnect") else events.add("shutdown_current")
-        current.set(null)
-        val closing = live.toList()
-        live.clear()
-        for (s in closing) {
+        val s = current.getAndSet(null)
+        if (s != null) {
             try { s.close() } catch (_: Exception) {}
         }
     }
@@ -91,28 +84,6 @@ class DirectTcpAdapter(
             } catch (_: InterruptedException) {
                 continue
             } ?: continue
-            if (!inflight.tryAcquire()) {
-                if (!listener.pending.offer(local)) {
-                    try { local.close() } catch (_: Exception) {}
-                    events.add("queue_full_rejected")
-                }
-                continue
-            }
-            Thread {
-                try {
-                    handleLocal(local)
-                } finally {
-                    inflight.release()
-                }
-            }.apply { isDaemon = true; name = "razban-direct-stream" }.start()
-        }
-    }
-
-    private fun handleLocal(local: Socket) {
-            if (events.contains("data_ok")) {
-                relayToKnownPeer(local)
-                return
-            }
             var session: JSONObject? = null
             var direct: Socket? = null
             val streamStarted = System.currentTimeMillis()
@@ -143,7 +114,6 @@ class DirectTcpAdapter(
                     connect = true,
                 )
                 current.set(direct)
-                live.add(direct)
                 events.add("connected")
                 diag("direct_connected")
                 channel(DirectChannelState.TcpConnected)
@@ -158,16 +128,15 @@ class DirectTcpAdapter(
                 }
                 events.add("stream_finished")
                 diag("direct_stream_finished", durationMs = System.currentTimeMillis() - streamStarted)
-                if (!stop.get() && live.none { it !== direct }) channel(DirectChannelState.Error)
+                if (!stop.get()) channel(DirectChannelState.Error)
             } catch (t: Throwable) {
                 lastError = t.javaClass.simpleName
                 events.add("stream_error")
                 diag("direct_stream_error", mapError(t), System.currentTimeMillis() - streamStarted)
-                if (!stop.get() && live.none { it !== direct }) channel(DirectChannelState.Error)
+                if (!stop.get()) channel(DirectChannelState.Error)
                 Log.d(TAG, "stream_error ${t.javaClass.simpleName}")
             } finally {
-                if (direct != null) live.remove(direct)
-                current.compareAndSet(direct, null)
+                current.set(null)
                 try { direct?.close() } catch (_: Exception) {}
                 try { local.close() } catch (_: Exception) {}
                 if (session != null && session.has("session")) {
@@ -176,46 +145,6 @@ class DirectTcpAdapter(
                     }
                 }
             }
-    }
-
-    private fun relayToKnownPeer(local: Socket) {
-        val streamStarted = System.currentTimeMillis()
-        var direct: Socket? = null
-        try {
-            val peer = profile.plan.devicePeer ?: throw IllegalStateException("device_peer")
-            direct = sockets.open(
-                InetSocketAddress(peer.host, peer.port),
-                localBind = profile.plan.deviceBind,
-                timeoutMs = DirectTcpRuntime.CONNECT_TIMEOUT_MS,
-                connect = true,
-            )
-            current.set(direct)
-            live.add(direct)
-            events.add("connected")
-            diag("direct_connected")
-            var probed = false
-            DirectTcpRuntime.relayUntilClosed(local, direct, stop) { up, down ->
-                if (!probed && up > 0 && down > 0) {
-                    probed = true
-                    events.add("data_ok")
-                    diag("direct_data_ok")
-                    channel(DirectChannelState.DataWorking)
-                }
-            }
-            events.add("stream_finished")
-            diag("direct_stream_finished", durationMs = System.currentTimeMillis() - streamStarted)
-            if (!stop.get() && live.none { it !== direct }) channel(DirectChannelState.Error)
-        } catch (t: Throwable) {
-            lastError = t.javaClass.simpleName
-            events.add("stream_error")
-            diag("direct_stream_error", mapError(t), System.currentTimeMillis() - streamStarted)
-            if (!stop.get() && live.none { it !== direct }) channel(DirectChannelState.Error)
-            Log.d(TAG, "stream_error ${t.javaClass.simpleName}")
-        } finally {
-            if (direct != null) live.remove(direct)
-            current.compareAndSet(direct, null)
-            try { direct?.close() } catch (_: Exception) {}
-            try { local.close() } catch (_: Exception) {}
         }
     }
 
