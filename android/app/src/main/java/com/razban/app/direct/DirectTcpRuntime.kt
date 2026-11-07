@@ -151,7 +151,10 @@ object DirectTcpRuntime {
     }
 }
 
-/** One accepted local stream plus one queued stream; extras are rejected. */
+/** One accepted local stream plus one queued stream; extras are rejected.
+ *  [acceptOffer] can refuse a new socket immediately so a second Xray mux
+ *  parent does not sit half-open (TLS handshake hung) while the single
+ *  coordinated remote 4-tuple is already live. */
 class BoundedLocalListener(port: Int = 0) {
     private val listener = ServerSocket().apply {
         reuseAddress = true
@@ -161,6 +164,8 @@ class BoundedLocalListener(port: Int = 0) {
     val localPort: Int get() = listener.localPort
     val pending = ArrayBlockingQueue<Socket>(1)
     val events = CopyOnWriteArrayList<String>()
+    /** Return false to close the accepted socket without queuing it. */
+    var acceptOffer: () -> Boolean = { true }
     private val threads = ArrayList<Thread>()
     private val stop = AtomicBoolean(false)
 
@@ -177,7 +182,7 @@ class BoundedLocalListener(port: Int = 0) {
                 // Do not put a read timeout on the accepted Xray socket: an
                 // idle mux parent is expected and must not tear the data path.
                 client.soTimeout = 0
-                if (!pending.offer(client)) {
+                if (!acceptOffer() || !pending.offer(client)) {
                     try { client.close() } catch (_: Exception) {}
                     events.add("queue_full_rejected")
                 }

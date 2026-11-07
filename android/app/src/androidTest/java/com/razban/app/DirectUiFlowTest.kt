@@ -141,6 +141,11 @@ class DirectUiFlowTest {
         assertFalse("oversized payload must fail", huge.ok)
         report.appendLine("reject_bad_json=ok reject_oversize=ok")
 
+        // Non-loopback TEST-NET dest that fixture freedom can reach locally
+        // after this address is on lo — same shape as a real site through the
+        // DE edge, not a 127.0.0.1 dest (loopback is not tunneled on a phone).
+        device.executeShellCommand("su 0 ip addr add 198.51.100.10/32 dev lo")
+
         clickFirst(listOf("Подключить", "Connect"), 8_000)
         Thread.sleep(1_000)
         clickFirst(listOf("OK", "Ок", "Allow", "Разрешить", "START", "Start"), 4_000)
@@ -163,7 +168,7 @@ class DirectUiFlowTest {
         val socksUntil = System.currentTimeMillis() + 15_000
         while (System.currentTimeMillis() < socksUntil) {
             socks = runCatching {
-                SocksHttpProbe.httpGet("127.0.0.1", 10808, "127.0.0.1", origin.port, "/", 5000)
+                SocksHttpProbe.httpGet("127.0.0.1", 10808, "198.51.100.10", origin.port, "/", 5000)
             }.getOrNull()
             if (socks?.ok == true && socks.status == 200) break
             Thread.sleep(400)
@@ -171,6 +176,11 @@ class DirectUiFlowTest {
         val socksOk = socks?.ok == true && socks.status == 200
         report.appendLine("transport_socks=${if (socksOk) "ok" else "fail"} viaSocks=${socks?.viaSocks} status=${socks?.status} err=${socks?.error}")
         report.appendLine("peer_kind=${if (xrayServer.port > 0) "xray-tls" else "raw-http"} peer_port=$dataPeerPort origin_port=${origin.port}")
+        val muxInfo = runCatching {
+            org.json.JSONObject(File(appCtx.filesDir, "xray-run.json").readText())
+                .getJSONArray("outbounds").getJSONObject(0).optJSONObject("mux")?.toString()
+        }.getOrNull()
+        report.appendLine("xray_mux=$muxInfo")
 
         // Real TUN check from a different UID (shell). Same-UID HTTP is not
         // used, and origin.hits is not treated as TUN success (SOCKS may have
@@ -198,7 +208,7 @@ class DirectUiFlowTest {
 
         Thread.sleep(21_000)
         val socksAfterIdle = runCatching {
-            SocksHttpProbe.httpGet("127.0.0.1", 10808, "127.0.0.1", origin.port, "/")
+            SocksHttpProbe.httpGet("127.0.0.1", 10808, "198.51.100.10", origin.port, "/")
         }.getOrNull()
         report.appendLine("after_idle_20s socks=${socksAfterIdle?.ok} status=${socksAfterIdle?.status} err=${socksAfterIdle?.error}")
         assertTrue(
@@ -215,7 +225,7 @@ class DirectUiFlowTest {
         var socksRecover: SocksHttpProbe.Result? = null
         while (System.currentTimeMillis() < recoverUntil) {
             socksRecover = runCatching {
-                SocksHttpProbe.httpGet("127.0.0.1", 10808, "127.0.0.1", origin.port, "/")
+                SocksHttpProbe.httpGet("127.0.0.1", 10808, "198.51.100.10", origin.port, "/")
             }.getOrNull()
             if (socksRecover?.ok == true && socksRecover.status == 200) break
             Thread.sleep(500)

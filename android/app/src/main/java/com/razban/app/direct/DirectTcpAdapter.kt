@@ -28,6 +28,7 @@ class DirectTcpAdapter(
     private val stop = AtomicBoolean(false)
     private val worker = AtomicReference<Thread>()
     private val current = AtomicReference<Socket>()
+    private val handling = AtomicBoolean(false)
     val events = CopyOnWriteArrayList<String>()
     @Volatile var lastError: String? = null
         private set
@@ -37,6 +38,7 @@ class DirectTcpAdapter(
     val listenPort: Int get() = listener.localPort
 
     fun start() {
+        listener.acceptOffer = { !handling.get() }
         listener.startAccept()
         val t = Thread { workerLoop() }.apply { isDaemon = true; name = "razban-direct-adapter" }
         worker.set(t)
@@ -84,6 +86,7 @@ class DirectTcpAdapter(
             } catch (_: InterruptedException) {
                 continue
             } ?: continue
+            handling.set(true)
             var session: JSONObject? = null
             var direct: Socket? = null
             val streamStarted = System.currentTimeMillis()
@@ -97,6 +100,7 @@ class DirectTcpAdapter(
                     joined = coordinator.call("join")
                 }
                 events.add("joined")
+                Log.d(TAG, "joined")
                 diag("direct_joined")
                 channel(DirectChannelState.Signaling)
                 val remotePlan = FixedPlan.from(joined.getJSONObject("plan"))
@@ -115,6 +119,7 @@ class DirectTcpAdapter(
                 )
                 current.set(direct)
                 events.add("connected")
+                Log.d(TAG, "connected")
                 diag("direct_connected")
                 channel(DirectChannelState.TcpConnected)
                 var probed = false
@@ -122,6 +127,7 @@ class DirectTcpAdapter(
                     if (!probed && up > 0 && down > 0) {
                         probed = true
                         events.add("data_ok")
+                        Log.d(TAG, "data_ok")
                         diag("direct_data_ok")
                         channel(DirectChannelState.DataWorking)
                     }
@@ -137,6 +143,7 @@ class DirectTcpAdapter(
                 Log.d(TAG, "stream_error ${t.javaClass.simpleName}")
             } finally {
                 current.set(null)
+                handling.set(false)
                 try { direct?.close() } catch (_: Exception) {}
                 try { local.close() } catch (_: Exception) {}
                 if (session != null && session.has("session")) {
