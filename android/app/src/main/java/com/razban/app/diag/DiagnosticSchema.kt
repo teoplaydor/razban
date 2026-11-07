@@ -13,6 +13,7 @@ object DiagnosticSchema {
         "vpn_start", "vpn_started", "vpn_stop", "vpn_failed",
         "xray_start", "xray_ok", "xray_failed",
         "direct_start", "direct_joined", "direct_armed", "direct_connected",
+        "direct_data_ok",
         "direct_stream_finished", "direct_stream_error", "direct_fail_closed",
         "import_ok", "import_failed", "profile_select", "smoke",
     )

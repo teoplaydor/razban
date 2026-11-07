@@ -100,6 +100,7 @@ jobs:
             android/app/build/reports/
             android/app/build/test-results/
             android/logcat-directtest.txt
+            android/ui-screenshots/
 
   phone-apk:
     runs-on: ubuntu-latest
@@ -196,26 +197,19 @@ jobs:
               if not js:
                   print("missing bundled webui index.js"); sys.exit(1)
               if '"razbanProfile"' not in js or '"outbounds"' not in js:
-                  print("clipboard detector missing razbanProfile/outbounds"); sys.exit(1)
-              if "profiles.list" in js:
-                  print("note: react already calls profiles.list")
-              print("frontend clipboard detector includes razbanProfile")
-              blob = b""
-              for name in zf.namelist():
-                  if name.endswith(".dex") or name.endswith(".xml"):
-                      blob += zf.read(name)
-              label = "Из файла".encode("utf-8")
-              label16 = "Из файла".encode("utf-16le")
-              if label not in blob and label16 not in blob:
-                  print("native button label missing from APK"); sys.exit(1)
-              print("native file-import label present in APK")
+                  print("frontend missing razbanProfile/outbounds literals"); sys.exit(1)
+              if "files.importDocument" not in js or "Из файла" not in js:
+                  print("frontend missing files.importDocument / Из файла"); sys.exit(1)
+              if "profiles.list" not in js:
+                  print("frontend missing profiles.list"); sys.exit(1)
+              print("frontend has file import, profiles.list, razbanProfile")
           PY
           AAPT="$ANDROID_SDK_ROOT/build-tools/34.0.0/aapt"
           BADGE=$("$AAPT" dump badging "$APK")
           echo "$BADGE" | head -5
           echo "$BADGE" | grep -q "package: name='com.razban.app.directtest'" || { echo "::error::unexpected applicationId"; echo "$BADGE"; exit 1; }
           mkdir -p out
-          OUT="out/Razban-0.1.45-directtest.apk"
+          OUT="out/Razban-0.1.46-directtest.apk"
           cp "$APK" "$OUT"
           echo "path=$OUT" >> "$GITHUB_OUTPUT"
           echo "sha=$(sha256sum "$OUT" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
@@ -224,7 +218,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: razban-directtest-apk
-          path: android/out/Razban-0.1.45-directtest.apk
+          path: android/out/Razban-0.1.46-directtest.apk
 
   ingest-smoke:
     runs-on: ubuntu-latest

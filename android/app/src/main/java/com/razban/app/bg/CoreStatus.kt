@@ -178,8 +178,8 @@ object CoreStatus : CommandClientHandler {
 
     /** "Подключено · ↓ 1.2 МБ/с  ↑ 340 КБ/с · за сессию 45.0 МБ" — the live
      *  foreground-notification body. */
-    fun notifLine(): String =
-        "Подключено · ↓ ${fmtBytes(downlink)}/с  ↑ ${fmtBytes(uplink)}/с · " +
+    fun notifLine(title: String = "Подключено"): String =
+        "$title · ↓ ${fmtBytes(downlink)}/с  ↑ ${fmtBytes(uplink)}/с · " +
         "за сессию ${fmtBytes(downlinkTotal + uplinkTotal)}"
 
     override fun writeConnectionEvents(events: ConnectionEvents) {

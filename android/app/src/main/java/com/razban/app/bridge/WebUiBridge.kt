@@ -30,6 +30,7 @@ class WebUiBridge(
     private val ctx: Context,
     private val onConnect: () -> Unit,
     private val onDisconnect: () -> Unit,
+    private val onImportDocument: (() -> Unit)? = null,
 ) {
     /** Set by the Activity: posts a JSON string to JS (window.__razbanDeliver). */
     var deliver: (String) -> Unit = {}
@@ -75,6 +76,10 @@ class WebUiBridge(
             .put("data", ctx.filesDir.absolutePath)
 
         "vpn.state" -> stateString()
+        "files.importDocument" -> {
+            onImportDocument?.invoke()
+            JSONObject().put("ok", true).put("started", true)
+        }
         "vpn.connect" -> { onConnect(); true }
         "vpn.disconnect" -> { onDisconnect(); true }
         "vpn.stats" -> com.razban.app.bg.CoreStatus.statsJson(
@@ -221,12 +226,11 @@ class WebUiBridge(
 
     // ───────────────────────── helpers ─────────────────────────
 
-    private fun stateString(): String = when (RazbanVpnService.lastStatus) {
-        RazbanVpnService.Status.Started -> "connected"
-        RazbanVpnService.Status.Starting -> "connecting"
-        RazbanVpnService.Status.Stopping -> "disconnecting"
-        else -> "disconnected"
-    }
+    private fun stateString(): String = com.razban.app.direct.VpnUiState.publicLabel(
+        RazbanVpnService.lastStatus.name,
+        RazbanVpnService.lastChannelState,
+        ProfileStore.isDirectActive(ctx),
+    )
 
     private fun appVersion(): String = try {
         ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "0.1.0"
@@ -310,12 +314,15 @@ class WebUiBridge(
 
     private fun serversJson(): JSONObject {
         val servers = JSONArray()
+        val direct = ProfileStore.isDirectActive(ctx)
         for ((tag, type, addr) in ConfigStore.protocolOutbounds(ctx)) {
+            val showReality = type == "vless" && !direct
             servers.put(JSONObject()
                 .put("id", tag).put("name", tag).put("protocol", type)
                 .put("server", addr.first).put("port", addr.second)
                 .put("pingMs", 0)
-                .put("reality", JSONObject().put("enabled", type == "vless")))
+                .put("security", if (direct && type == "vless") "tls" else if (showReality) "reality" else "")
+                .put("reality", JSONObject().put("enabled", showReality)))
         }
         return JSONObject().put("servers", servers).put("groups", JSONArray())
     }

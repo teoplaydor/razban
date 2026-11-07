@@ -153,6 +153,15 @@ object ConfigStore {
      *  For a Reality profile this is the ONLY user-facing server — the sing-box
      *  config just forwards the TUN into xray's local SOCKS. */
     private fun xrayServer(context: Context): Triple<String, String, Pair<String, Int>>? {
+        // Direct TCP: the xray sidecar targets the local adapter (127.0.0.1).
+        // Surface the real DE peer and never label it as Reality.
+        if (ProfileStore.isDirectActive(context)) {
+            val profile = ProfileStore.currentDirect(context)
+            val peer = profile?.plan?.devicePeer
+            if (profile != null && peer != null) {
+                return Triple(profile.name, "vless", peer.host to peer.port)
+            }
+        }
         val json = xrayConfig(context) ?: return null
         return try {
             val obs = JSONObject(json).optJSONArray("outbounds") ?: return null

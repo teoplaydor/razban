@@ -6,7 +6,9 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.razban.app.config.ConfigStore
 import com.razban.app.config.ProfileStore
+import com.razban.app.direct.DirectChannelState
 import com.razban.app.direct.DirectTcpAdapter
+import com.razban.app.direct.VpnUiState
 import com.razban.app.diag.DiagnosticReporter
 import io.nekohasekai.libbox.CommandServer
 import io.nekohasekai.libbox.CommandServerHandler
@@ -75,6 +77,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     private fun startTunnel() {
         status = Status.Starting
+        lastChannelState = DirectChannelState.Idle
         val startedAt = System.currentTimeMillis()
         DiagnosticReporter.record(this, "vpn_start")
         Notifications.startForeground(this)
@@ -115,8 +118,13 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                     adapter.onDiagnostic = { stage, error, duration ->
                         DiagnosticReporter.record(applicationContext, stage, error, duration)
                     }
+                    adapter.onChannelState = { state ->
+                        lastChannelState = state
+                        broadcastStatus()
+                    }
                     adapter.start()
                     directAdapter = adapter
+                    lastChannelState = DirectChannelState.Signaling
                     android.util.Log.d(TAG, "startTunnel: direct adapter up")
                 }
                 if (ConfigStore.hasXray(this@RazbanVpnService)) {
@@ -150,6 +158,13 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 server.startOrReloadService(config, override)
                 android.util.Log.d(TAG, "startTunnel: service started OK")
                 status = Status.Started
+                if (ProfileStore.isDirectActive(this@RazbanVpnService) &&
+                    lastChannelState != DirectChannelState.DataWorking
+                ) {
+                    if (lastChannelState == DirectChannelState.Idle) {
+                        lastChannelState = DirectChannelState.TunUp
+                    }
+                }
                 DiagnosticReporter.record(
                     this@RazbanVpnService,
                     "vpn_started",
@@ -162,7 +177,14 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 // Live foreground notification: flips the stale "Подключение" to
                 // "Подключено" + live speed/session totals each status tick (~1s).
                 CoreStatus.onTick = {
-                    try { Notifications.update(this@RazbanVpnService, CoreStatus.notifLine()) } catch (_: Exception) {}
+                    try {
+                        val title = VpnUiState.notifTitle(
+                            status.name,
+                            lastChannelState,
+                            ProfileStore.isDirectActive(this@RazbanVpnService),
+                        )
+                        Notifications.update(this@RazbanVpnService, CoreStatus.notifLine(title))
+                    } catch (_: Exception) {}
                 }
                 // Runtime domain classifier: GeoIP-pins observed RU services to
                 // direct (safe — see GeoClassifier). Applies via reload (hot).
@@ -238,6 +260,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             commandServer = null
             try { tunFd?.close() } catch (_: Throwable) {}
             tunFd = null
+            lastChannelState = DirectChannelState.Idle
             status = Status.Stopped
             broadcastStatus()
             Notifications.stopForeground(this@RazbanVpnService)
@@ -258,8 +281,15 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     private fun broadcastStatus() {
+        val ui = VpnUiState.publicLabel(
+            status.name,
+            lastChannelState,
+            ProfileStore.isDirectActive(this),
+        )
         sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName)
-            .putExtra(EXTRA_STATUS, status.name))
+            .putExtra(EXTRA_STATUS, status.name)
+            .putExtra(EXTRA_CHANNEL, lastChannelState.name)
+            .putExtra(EXTRA_UI_STATE, ui))
     }
 
     /** Pre-resolve common RU/news/video/AI hosts right after Connect so the user's
@@ -447,11 +477,18 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         const val ACTION_RELOAD = "com.razban.app.RELOAD"
         const val ACTION_STATUS = "com.razban.app.STATUS"
         const val EXTRA_STATUS = "status"
+        const val EXTRA_CHANNEL = "channel"
+        const val EXTRA_UI_STATE = "ui_state"
 
         /** Last status, readable from the test process (same process as the
          *  service). Not for production logic — UI uses the broadcast. */
         @Volatile
         var lastStatus: Status = Status.Stopped
+            internal set
+
+        /** Direct data-channel state. Idle for relay profiles. */
+        @Volatile
+        var lastChannelState: DirectChannelState = DirectChannelState.Idle
             internal set
     }
 }

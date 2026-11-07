@@ -12,6 +12,8 @@ object ProfileImport {
     const val MAX_BYTES = 256 * 1024
 
     fun fromText(context: Context, text: String): ProfileStore.ImportResult {
+        if (text.toByteArray(Charsets.UTF_8).size > MAX_BYTES)
+            return ProfileStore.ImportResult(false, error = "too_large")
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return ProfileStore.ImportResult(false, error = "empty")
         return ProfileStore.importPayload(context, trimmed)

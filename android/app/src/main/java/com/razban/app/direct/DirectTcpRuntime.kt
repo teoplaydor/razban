@@ -56,7 +56,9 @@ object DirectTcpRuntime {
     fun openActiveChannelSocket(bind: SocketRef): Socket {
         val s = Socket()
         s.reuseAddress = false
-        s.soTimeout = CONNECT_TIMEOUT_MS
+        // Connect timeout is applied only in Socket.connect(_, timeout). A
+        // leftover soTimeout here used to kill an idle mux parent after 8s.
+        s.soTimeout = 0
         applyNormalTtl(s)
         try {
             s.bind(InetSocketAddress(bind.host, bind.port))
@@ -75,29 +77,75 @@ object DirectTcpRuntime {
 
     data class RelayStats(val bytesLeftToRight: Int, val bytesRightToLeft: Int)
 
-    fun relayUntilClosed(left: Socket, right: Socket, stop: AtomicBoolean): RelayStats {
+    /**
+     * Byte-bridge two already-connected sockets until EOF, cancel, or error.
+     * Read timeouts are cleared: a VLESS+MUX parent is allowed to sit idle.
+     * [java.net.SocketTimeoutException] and unexpected I/O are propagated
+     * (never treated as a normal EOF / stream_finished).
+     */
+    fun relayUntilClosed(
+        left: Socket,
+        right: Socket,
+        stop: AtomicBoolean,
+        onProgress: ((Int, Int) -> Unit)? = null,
+    ): RelayStats {
+        left.soTimeout = 0
+        right.soTimeout = 0
         val a = AtomicInteger()
         val b = AtomicInteger()
+        val error = java.util.concurrent.atomic.AtomicReference<Exception>()
+        val note = Runnable { onProgress?.invoke(a.get(), b.get()) }
         val t = Thread {
-            try { copy(left, right, a, stop) } catch (_: Exception) {}
+            try {
+                pump(left, right, a, stop, note)
+            } catch (e: Exception) {
+                error.compareAndSet(null, e)
+            }
         }
         t.isDaemon = true
+        t.name = "razban-direct-relay"
         t.start()
-        try { copy(right, left, b, stop) } catch (_: Exception) {}
+        try {
+            pump(right, left, b, stop, note)
+        } catch (e: Exception) {
+            error.compareAndSet(null, e)
+        }
         try { t.join(3000) } catch (_: InterruptedException) {}
+        if (t.isAlive) {
+            try { left.close() } catch (_: Exception) {}
+            try { right.close() } catch (_: Exception) {}
+            try { t.join(1000) } catch (_: InterruptedException) {}
+        }
+        val raised = error.get()
+        if (raised != null && !stop.get()) throw raised
         return RelayStats(a.get(), b.get())
     }
 
-    private fun copy(from: Socket, to: Socket, count: AtomicInteger, stop: AtomicBoolean) {
+    internal fun pump(
+        from: Socket,
+        to: Socket,
+        count: AtomicInteger,
+        stop: AtomicBoolean,
+        onChunk: Runnable? = null,
+    ) {
         val buf = ByteArray(16 * 1024)
         val input = from.getInputStream()
         val output = to.getOutputStream()
         while (!stop.get()) {
-            val n = try { input.read(buf) } catch (_: Exception) { break }
-            if (n <= 0) break
+            val n = try {
+                input.read(buf)
+            } catch (e: SocketTimeoutException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                if (stop.get()) break
+                throw e
+            }
+            if (n < 0) break
+            if (n == 0) continue
             output.write(buf, 0, n)
             output.flush()
             count.addAndGet(n)
+            try { onChunk?.run() } catch (_: Exception) {}
         }
         try { to.shutdownOutput() } catch (_: Exception) {}
     }
@@ -126,7 +174,9 @@ class BoundedLocalListener(port: Int = 0) {
                 } catch (_: Exception) {
                     break
                 }
-                client.soTimeout = 3000
+                // Do not put a read timeout on the accepted Xray socket: an
+                // idle mux parent is expected and must not tear the data path.
+                client.soTimeout = 0
                 if (!pending.offer(client)) {
                     try { client.close() } catch (_: Exception) {}
                     events.add("queue_full_rejected")

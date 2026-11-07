@@ -49,6 +49,9 @@ class ProtectedSockets(
                 socket.connect(peer, timeoutMs)
                 events.add("connect")
             }
+            // Connect uses its own timeout argument; relayed streams must not
+            // inherit that as a read timeout (idle mux / TLS wait).
+            socket.soTimeout = 0
             return socket
         } catch (t: Throwable) {
             try { socket.close() } catch (_: Exception) {}

@@ -28,6 +28,7 @@ class DirectTcpAdapter(
     @Volatile var lastError: String? = null
         private set
     var onDiagnostic: ((stage: String, error: String?, durationMs: Long?) -> Unit)? = null
+    var onChannelState: ((DirectChannelState) -> Unit)? = null
 
     val listenPort: Int get() = listener.localPort
 
@@ -93,6 +94,7 @@ class DirectTcpAdapter(
                 }
                 events.add("joined")
                 diag("direct_joined")
+                channel(DirectChannelState.Signaling)
                 val remotePlan = FixedPlan.from(joined.getJSONObject("plan"))
                 if (remotePlan != profile.plan) throw IllegalStateException("fixed endpoint plan mismatch")
                 session = coordinator.armed(joined)
@@ -110,13 +112,24 @@ class DirectTcpAdapter(
                 current.set(direct)
                 events.add("connected")
                 diag("direct_connected")
-                DirectTcpRuntime.relayUntilClosed(local, direct, stop)
+                channel(DirectChannelState.TcpConnected)
+                var probed = false
+                DirectTcpRuntime.relayUntilClosed(local, direct, stop) { up, down ->
+                    if (!probed && up > 0 && down > 0) {
+                        probed = true
+                        events.add("data_ok")
+                        diag("direct_data_ok")
+                        channel(DirectChannelState.DataWorking)
+                    }
+                }
                 events.add("stream_finished")
                 diag("direct_stream_finished", durationMs = System.currentTimeMillis() - streamStarted)
+                if (!stop.get()) channel(DirectChannelState.Error)
             } catch (t: Throwable) {
                 lastError = t.javaClass.simpleName
                 events.add("stream_error")
                 diag("direct_stream_error", mapError(t), System.currentTimeMillis() - streamStarted)
+                if (!stop.get()) channel(DirectChannelState.Error)
                 Log.d(TAG, "stream_error ${t.javaClass.simpleName}")
             } finally {
                 current.set(null)
@@ -135,7 +148,12 @@ class DirectTcpAdapter(
         try { onDiagnostic?.invoke(stage, error, durationMs) } catch (_: Exception) {}
     }
 
+    private fun channel(state: DirectChannelState) {
+        try { onChannelState?.invoke(state) } catch (_: Exception) {}
+    }
+
     private fun mapError(t: Throwable): String = when {
+        t is java.net.SocketTimeoutException -> "timeout"
         t is java.util.concurrent.TimeoutException -> "timeout"
         t.message?.contains("plan mismatch") == true -> "plan_mismatch"
         t.message?.contains("protect") == true -> "protect_failed"
