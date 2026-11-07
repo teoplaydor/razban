@@ -83,22 +83,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           working-directory: android
-          script: |
-            set +e
-            adb wait-for-device
-            adb logcat -c || true
-            adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/logcat-directtest.txt" 2>&1 &
-            LOGCAT_PID=$!
-            gradle connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.DirectTcpIntegrationTest,com.razban.app.DiagnosticUploadTest
-            rc=$?
-            sleep 2
-            kill "$LOGCAT_PID" >/dev/null 2>&1 || true
-            wait "$LOGCAT_PID" >/dev/null 2>&1 || true
-            echo "gradle rc=$rc"
-            if [ "$rc" -eq 0 ]; then
-              exit 0
-            fi
-            exit "$rc"
+          script: bash "$GITHUB_WORKSPACE/android/ci/run-directtest-emulator.sh"
       - name: Redacted log excerpt
         if: always()
         run: |
