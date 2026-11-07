@@ -88,7 +88,7 @@ jobs:
             adb logcat -c || true
             adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/logcat-directtest.txt" 2>&1 &
             LOGCAT_PID=$!
-            gradle connectedDirecttestAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.DirectTcpIntegrationTest
+            gradle connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.DirectTcpIntegrationTest
             rc=$?
             sleep 2
             kill "$LOGCAT_PID" 2>/dev/null
