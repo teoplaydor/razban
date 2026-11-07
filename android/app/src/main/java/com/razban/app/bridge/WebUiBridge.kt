@@ -4,6 +4,7 @@ import android.content.Context
 import android.webkit.JavascriptInterface
 import com.razban.app.bg.RazbanVpnService
 import com.razban.app.config.ConfigStore
+import com.razban.app.config.ProfileStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -94,6 +95,17 @@ class WebUiBridge(
         // Servers/bundles: the phone runs a bundled sing-box config. Surface its
         // protocol outbounds so the Servers tab shows them (not "0 of 0").
         "servers.list" -> serversJson()
+        "profiles.list" -> ProfileStore.listJson(ctx)
+        "profiles.select" -> {
+            val name = when (params) {
+                is JSONObject -> params.optString("name", "")
+                is String -> params
+                else -> ""
+            }
+            val ok = name.isNotEmpty() && ProfileStore.select(ctx, name)
+            if (ok) pushEvent("servers.changed", true)
+            JSONObject().put("ok", ok).put("active", ProfileStore.activeName(ctx) ?: JSONObject.NULL)
+        }
         "bundles.list" -> bundlesJson()
         // Live per-protocol health for the bundle card. We don't have the admin
         // agent on the phone, so reflect the tunnel state: when connected, the
@@ -144,7 +156,15 @@ class WebUiBridge(
                 is String -> params
                 else -> ""
             }
-            if (text.trimStart().startsWith("{") && text.contains("\"outbounds\"")) {
+            val imported = ProfileStore.importPayload(ctx, text)
+            if (imported.ok) {
+                pushEvent("servers.changed", true)
+                JSONObject().put("count", imported.count)
+                    .put("profile", imported.name)
+                    .put("kind", imported.kind)
+            } else if (imported.error != null && text.contains("razbanProfile")) {
+                JSONObject().put("count", 0).put("error", imported.error)
+            } else if (text.trimStart().startsWith("{") && text.contains("\"outbounds\"")) {
                 ConfigStore.importConfig(ctx, text)
                 pushEvent("servers.changed", true)   // tell the UI to re-fetch the list
                 JSONObject().put("count", 1)
@@ -476,7 +496,10 @@ class WebUiBridge(
             is String -> params
             else -> params?.toString() ?: return
         }
-        if (cfg.trimStart().startsWith("{")) ConfigStore.importConfig(ctx, cfg)
+        if (cfg.contains("\"razbanProfile\"")) {
+            val imported = ProfileStore.importPayload(ctx, cfg)
+            if (!imported.ok) throw IllegalArgumentException(imported.error ?: "direct_import")
+        } else if (cfg.trimStart().startsWith("{")) ConfigStore.importConfig(ctx, cfg)
     }
 
     /** Launchable (user-facing) installed apps for the Apps tab, so the user can

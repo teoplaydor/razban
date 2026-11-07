@@ -1,0 +1,195 @@
+name: android-directtest
+
+# Experimental Direct TCP test package. Mock signalling only — this workflow
+# does not demonstrate TSPU, mobile NAT, or production server reachability.
+# Debug-signed sidecar APK (com.razban.app.directtest). No release keystore,
+# no live coordinator credentials, no default-config secret.
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - 'feature/android-directtcp-experimental'
+
+permissions:
+  contents: read
+
+jobs:
+  emulator-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SING_BOX_TAG: v1.13.12
+      LIBBOX_TARGETS: android/amd64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse bundled secret config
+        run: |
+          if [ -f android/app/src/main/assets/default-config.json ]; then
+            echo "::error::default-config.json must not ship in the directtest artifact"; exit 1
+          fi
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Set up Go 1.24
+        uses: actions/setup-go@v5
+        with: { go-version: '1.24.7' }
+      - name: Set up Android SDK + NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install NDK 28 + SDK
+        run: |
+          yes | sdkmanager "ndk;28.0.13004108" "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >> "$GITHUB_ENV"
+      - name: Build libbox.aar (x86_64)
+        run: bash android/build-libbox.sh "$SING_BOX_TAG"
+      - name: Set up Go 1.27 for xray
+        uses: actions/setup-go@v5
+        with: { go-version: '1.27.0' }
+      - name: Build xray-core x86_64
+        env:
+          XRAY_TAG: v26.10.31
+        run: |
+          git clone --depth 1 --branch "$XRAY_TAG" https://github.com/XTLS/Xray-core "$RUNNER_TEMP/xray"
+          cd "$RUNNER_TEMP/xray"
+          OUT="$GITHUB_WORKSPACE/android/app/src/main/jniLibs"
+          NDKBIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC=""; for api in 24 23 22 21; do [ -x "$NDKBIN/x86_64-linux-android${api}-clang" ] && { CC="$NDKBIN/x86_64-linux-android${api}-clang"; break; }; done
+          echo "using CC=$CC"
+          mkdir -p "$OUT/x86_64"
+          CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/x86_64/libxray.so" ./main
+          file "$OUT/x86_64/libxray.so"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Unit tests
+        working-directory: android
+        run: gradle :app:testDirecttestUnitTest --no-daemon --stacktrace
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Instrumented mock signalling tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          working-directory: android
+          script: |
+            set +e
+            adb wait-for-device
+            adb logcat -c || true
+            adb logcat -v threadtime > "$GITHUB_WORKSPACE/android/logcat-directtest.txt" 2>&1 &
+            LOGCAT_PID=$!
+            gradle connectedDirecttestAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.razban.app.DirectTcpIntegrationTest
+            rc=$?
+            sleep 2
+            kill "$LOGCAT_PID" 2>/dev/null
+            echo "gradle rc=$rc"
+            exit $rc
+      - name: Redacted log excerpt
+        if: always()
+        run: |
+          F="$GITHUB_WORKSPACE/android/logcat-directtest.txt"
+          echo "===== razban-direct / razban-bridge / razban-import / crashes ====="
+          grep -aE "razban-direct|razban-bridge|razban-import|razban-core|Fatal signal|AndroidRuntime|panic" "$F" \
+            | grep -avE "hmacKeyHex|BEGIN PRIVATE|UPDATE_KEY|password" | head -200 || echo "(none)"
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: directtest-emulator-reports
+          path: |
+            android/app/build/reports/
+            android/app/build/test-results/
+            android/logcat-directtest.txt
+
+  phone-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SING_BOX_TAG: v1.13.12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse bundled secret config
+        run: |
+          if [ -f android/app/src/main/assets/default-config.json ]; then
+            echo "::error::default-config.json must not ship in the directtest artifact"; exit 1
+          fi
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Set up Go 1.24
+        uses: actions/setup-go@v5
+        with: { go-version: '1.24.7' }
+      - name: Set up Android SDK + NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+      - name: Install NDK 28 + SDK
+        run: |
+          yes | sdkmanager "ndk;28.0.13004108" "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.0.13004108" >> "$GITHUB_ENV"
+      - name: Build libbox.aar
+        run: bash android/build-libbox.sh "$SING_BOX_TAG"
+      - name: Set up Go 1.27 for xray
+        uses: actions/setup-go@v5
+        with: { go-version: '1.27.0' }
+      - name: Build xray-core for Android ABIs
+        env:
+          XRAY_TAG: v26.10.31
+        run: |
+          git clone --depth 1 --branch "$XRAY_TAG" https://github.com/XTLS/Xray-core "$RUNNER_TEMP/xray"
+          cd "$RUNNER_TEMP/xray"
+          OUT="$GITHUB_WORKSPACE/android/app/src/main/jniLibs"
+          NDKBIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC=""; for api in 21 22 23 24 26 28 29 30 33 34; do [ -x "$NDKBIN/aarch64-linux-android${api}-clang" ] && { CC="$NDKBIN/aarch64-linux-android${api}-clang"; break; }; done
+          echo "arm64 CC=$CC"; mkdir -p "$OUT/arm64-v8a"
+          CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/arm64-v8a/libxray.so" ./main
+          file "$OUT/arm64-v8a/libxray.so"
+          CC=""; for api in 21 22 23 24 26 28 29 30 33 34; do [ -x "$NDKBIN/armv7a-linux-androideabi${api}-clang" ] && { CC="$NDKBIN/armv7a-linux-androideabi${api}-clang"; break; }; done
+          echo "arm CC=$CC"; mkdir -p "$OUT/armeabi-v7a"
+          CGO_ENABLED=1 GOOS=android GOARCH=arm GOARM=7 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/armeabi-v7a/libxray.so" ./main || { echo "::warning::arm xray failed — ABI skipped"; rm -rf "$OUT/armeabi-v7a"; }
+          CC=""; for api in 21 22 23 24 26 28 29 30 33 34; do [ -x "$NDKBIN/x86_64-linux-android${api}-clang" ] && { CC="$NDKBIN/x86_64-linux-android${api}-clang"; break; }; done
+          echo "x86_64 CC=$CC"; mkdir -p "$OUT/x86_64"
+          CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC="$CC" go build -trimpath -buildvcs=false -ldflags "-s -w -checklinkname=0" -o "$OUT/x86_64/libxray.so" ./main || { echo "::warning::x86_64 xray failed — ABI skipped"; rm -rf "$OUT/x86_64"; }
+          find "$OUT" -name libxray.so -exec file {} \;
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Assemble debug-signed directtest APK
+        working-directory: android
+        run: gradle :app:assembleDirecttest --no-daemon --stacktrace
+      - name: Verify APK identity
+        id: apk
+        working-directory: android
+        run: |
+          APK=$(ls app/build/outputs/apk/directtest/*.apk | head -1)
+          if unzip -l "$APK" | grep -q "assets/default-config.json"; then
+            echo "::error::APK contains default-config.json"; exit 1
+          fi
+          if unzip -p "$APK" | grep -aE -- "-----BEGIN ([A-Z0-9]+ )?PRIVATE KEY-----" >/dev/null; then
+            echo "::error::APK appears to contain a PEM private key"; exit 1
+          fi
+          AAPT="$ANDROID_SDK_ROOT/build-tools/34.0.0/aapt"
+          BADGE=$("$AAPT" dump badging "$APK")
+          echo "$BADGE" | head -5
+          echo "$BADGE" | grep -q "package: name='com.razban.app.directtest'" || { echo "::error::unexpected applicationId"; echo "$BADGE"; exit 1; }
+          mkdir -p out
+          OUT="out/Razban-0.1.44-directtest.apk"
+          cp "$APK" "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "sha=$(sha256sum "$OUT" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -c%s "$OUT")" >> "$GITHUB_OUTPUT"
+      - name: Upload directtest APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: razban-directtest-apk
+          path: android/out/Razban-0.1.44-directtest.apk

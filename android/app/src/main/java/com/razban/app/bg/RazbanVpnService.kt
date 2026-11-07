@@ -5,6 +5,8 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.razban.app.config.ConfigStore
+import com.razban.app.config.ProfileStore
+import com.razban.app.direct.DirectTcpAdapter
 import io.nekohasekai.libbox.CommandServer
 import io.nekohasekai.libbox.CommandServerHandler
 import io.nekohasekai.libbox.ConnectionOwner
@@ -47,6 +49,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     private var commandServer: CommandServer? = null
     private var tunFd: ParcelFileDescriptor? = null
+    private var directAdapter: DirectTcpAdapter? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
@@ -77,6 +80,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         // protected sockets to actually egress (SFA does this too).
         DefaultNetworkMonitor.onNetwork = { net ->
             try { setUnderlyingNetworks(if (net != null) arrayOf(net) else null) } catch (_: Throwable) {}
+            if (net == null) try { directAdapter?.failClosed("no_underlying_network") } catch (_: Throwable) {}
         }
         // Seed the underlying network SYNCHRONOUSLY now, before the core runs — the
         // async ConnectivityManager callback usually hasn't fired by the time the
@@ -94,6 +98,21 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 // Reality servers run through the xray sidecar (sing-box uTLS is
                 // broken in our libbox build). Start it before sing-box so its
                 // local SOCKS is listening when sing-box's socks outbound dials it.
+                if (ProfileStore.isDirectActive(this@RazbanVpnService)) {
+                    val dcfg = ProfileStore.currentDirect(this@RazbanVpnService)
+                        ?: error("DirectTCPexperimental selected but runtime config missing")
+                    val adapter = DirectTcpAdapter(
+                        dcfg,
+                        networkProvider = {
+                            DefaultNetworkMonitor.currentNetwork
+                                ?: DefaultNetworkMonitor.seed(applicationContext)
+                        },
+                        protectSocket = { s -> protect(s) },
+                    )
+                    adapter.start()
+                    directAdapter = adapter
+                    android.util.Log.d(TAG, "startTunnel: direct adapter up")
+                }
                 if (ConfigStore.hasXray(this@RazbanVpnService)) {
                     val xcfg = ConfigStore.xrayConfig(this@RazbanVpnService)
                     if (xcfg == null || !XrayProcess.start(this@RazbanVpnService, xcfg))
@@ -183,6 +202,8 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             CoreStatus.onTick = null
             GeoClassifier.stop()
             CoreStatus.stop()
+            try { directAdapter?.stop() } catch (_: Throwable) {}
+            directAdapter = null
             XrayProcess.stop()
             try { commandServer?.closeService() } catch (_: Throwable) {}
             try { commandServer?.close() } catch (_: Throwable) {}

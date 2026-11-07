@@ -9,3 +9,8 @@
 
 # Kotlin coroutines internals occasionally tripped by aggressive shrinking.
 -dontwarn kotlinx.coroutines.**
+
+# Direct TCP adapter / signalling (referenced from VpnService lifecycle).
+-keep class com.razban.app.direct.** { *; }
+-keep class com.razban.app.config.ProfileStore { *; }
+-keep class com.razban.app.config.ProfileSecrets { *; }

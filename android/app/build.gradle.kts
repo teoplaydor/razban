@@ -63,6 +63,20 @@ android {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
         }
+        // Sidecar test package: coexists with production and .debug installs.
+        // Debug signing only; empty update channel so it cannot follow production.
+        create("directtest") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+            applicationIdSuffix = ".directtest"
+            versionNameSuffix = "-directtest"
+            isDebuggable = true
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("String", "UPDATE_URL", "\"\"")
+            buildConfigField("String", "UPDATE_KEY", "\"\"")
+        }
     }
 
     compileOptions {
@@ -75,6 +89,10 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        animationsDisabled = true
     }
     packaging {
         resources {
@@ -111,6 +129,9 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:rules:1.6.1")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
 
 // Fail early with a human message if libbox.aar wasn't produced.

@@ -25,7 +25,15 @@ object UriImport {
 
     data class Result(val singbox: String, val xray: String?)
 
+    fun profileName(raw: String): String {
+        val line = raw.lineSequence().map { it.trim() }
+            .firstOrNull { it.startsWith("vless://", true) } ?: return "RelayBaseline"
+        val name = fragmentName(line)
+        return if (name.isBlank() || name == "Imported") "RelayBaseline" else name
+    }
+
     fun toImport(raw: String): Result? {
+
         val line = raw.lineSequence().map { it.trim() }
             .firstOrNull { it.startsWith("vless://", true) } ?: return null
         val v = parseVless(line) ?: return null
