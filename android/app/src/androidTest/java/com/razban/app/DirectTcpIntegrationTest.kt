@@ -48,7 +48,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.TrustManagerFactory
 
-internal const val MOCK_CERT_PEM = "-----BEGIN CERTIFICATE-----\n" +
+internal const val DIRECT_MOCK_CERT_PEM = "-----BEGIN CERTIFICATE-----\n" +
         "MIIDJTCCAg2gAwIBAgIUC87aFoQZx+0F/hyMjq9PIze8PmMwDQYJKoZIhvcNAQEL\n" +
         "BQAwFDESMBAGA1UEAwwJMTI3LjAuMC4xMB4XDTI2MTEwNzExNDg0NFoXDTI2MTIw\n" +
         "NzExNDg0NFowFDESMBAGA1UEAwwJMTI3LjAuMC4xMIIBIjANBgkqhkiG9w0BAQEF\n" +
@@ -67,7 +67,7 @@ internal const val MOCK_CERT_PEM = "-----BEGIN CERTIFICATE-----\n" +
         "87oojPixa6P+G/BmHov8JPuuH394+rna3aKTT2phs6Y3oDGOYHRAva2jGCtrVO7G\n" +
         "D6yAnEK13DEQ1Vvw1oKo6ftgx5mfUYJrSUaAE+FBSfGXKZ+mWSMQroM=\n" +
         "-----END CERTIFICATE-----\n"
-internal const val MOCK_KEY_PEM = "-----BEGIN PRIVATE KEY-----\n" +
+internal const val DIRECT_MOCK_KEY_PEM = "-----BEGIN PRIVATE KEY-----\n" +
         "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDai6iZeyc2weq4\n" +
         "5OM8jdspEY7N0efn1IreIC9e2qeEpZ2MoshwqpJK5WEuTxzWHcOj0YQm/keyM8r8\n" +
         "Z8qe6RjG0HWa58ZSyBupUZQKL/ei9D3V99C6twd7ArtbUdK0h1gvj78p1LiX6sv8\n" +
@@ -256,7 +256,7 @@ class DirectTcpIntegrationTest {
             devicePeer = SocketRef("127.0.0.1", echo.port),
         )
         val state = SessionState(mapOf("device" to deviceKey, "server" to serverKey), plan, budget = 4)
-        val mock = MockSignalServer(state, sslContextFromPem(MOCK_CERT_PEM, MOCK_KEY_PEM))
+        val mock = MockSignalServer(state, directSslContextFromPem(DIRECT_MOCK_CERT_PEM, DIRECT_MOCK_KEY_PEM))
         mock.start()
         cleanup.add { mock.close() }
 
@@ -266,7 +266,7 @@ class DirectTcpIntegrationTest {
             name = "stub",
             signalUrl = url,
             signalHostname = "127.0.0.1",
-            caPem = MOCK_CERT_PEM,
+            caPem = DIRECT_MOCK_CERT_PEM,
             role = "server",
             hmacKey = serverKey,
             plan = plan,
@@ -303,7 +303,7 @@ class DirectTcpIntegrationTest {
             devicePeer = SocketRef("127.0.0.1", echo.port),
         )
         val state = SessionState(mapOf("device" to deviceKey, "server" to serverKey), plan, budget = 4)
-        val mock = MockSignalServer(state, sslContextFromPem(MOCK_CERT_PEM, MOCK_KEY_PEM))
+        val mock = MockSignalServer(state, directSslContextFromPem(DIRECT_MOCK_CERT_PEM, DIRECT_MOCK_KEY_PEM))
         mock.start()
         cleanup.add { mock.close() }
         val url = "https://127.0.0.1:${mock.port}/v1/session"
@@ -312,7 +312,7 @@ class DirectTcpIntegrationTest {
             name = "stub",
             signalUrl = url,
             signalHostname = "127.0.0.1",
-            caPem = MOCK_CERT_PEM,
+            caPem = DIRECT_MOCK_CERT_PEM,
             role = "server",
             hmacKey = serverKey,
             plan = plan,
@@ -453,14 +453,14 @@ class DirectTcpIntegrationTest {
         val dataTls = JSONObject()
             .put("uuid", "11111111-2222-3333-4444-555555555555")
             .put("serverName", "127.0.0.1")
-            .put("certificatePem", MOCK_CERT_PEM)
+            .put("certificatePem", DIRECT_MOCK_CERT_PEM)
         return JSONObject()
             .put("razbanProfile", DirectProfile.KIND)
             .put("name", "DirectTCPexperimental")
             .put("signal", JSONObject()
                 .put("url", url)
                 .put("hostname", "127.0.0.1")
-                .put("caPem", MOCK_CERT_PEM)
+                .put("caPem", DIRECT_MOCK_CERT_PEM)
                 .put("role", "device")
                 .put("hmacKeyHex", hmacHex))
             .put("plan", JSONObject()
@@ -657,7 +657,7 @@ internal class MockSocksHttpServer {
     }
 }
 
-internal fun sslContextFromPem(certPem: String, keyPem: String): SSLContext {
+internal fun directSslContextFromPem(certPem: String, keyPem: String): SSLContext {
     val cf = CertificateFactory.getInstance("X.509")
     val cert = cf.generateCertificate(certPem.byteInputStream()) as X509Certificate
     val b64 = keyPem.replace("-----BEGIN PRIVATE KEY-----", "")

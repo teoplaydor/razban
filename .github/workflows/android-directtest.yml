@@ -196,7 +196,7 @@ jobs:
                       break
               if not js:
                   print("missing bundled webui index.js"); sys.exit(1)
-              if '"razbanProfile"' not in js or '"outbounds"' not in js:
+              if "razbanProfile" not in js or "outbounds" not in js:
                   print("frontend missing razbanProfile/outbounds literals"); sys.exit(1)
               if "files.importDocument" not in js or "Из файла" not in js:
                   print("frontend missing files.importDocument / Из файла"); sys.exit(1)

@@ -66,7 +66,7 @@ class DirectUiFlowTest {
 
         // Signalling fixture. Data peer is the HTTP origin for a raw path
         // plus a dedicated Xray server when the binary is present.
-        val xrayServer = FixtureXrayServer.start(appCtx, MOCK_CERT_PEM, MOCK_KEY_PEM)
+        val xrayServer = FixtureXrayServer.start(appCtx, DIRECT_MOCK_CERT_PEM, DIRECT_MOCK_KEY_PEM)
         cleanup.add { xrayServer.close() }
         val dataPeerPort = if (xrayServer.port > 0) xrayServer.port else origin.port
 
@@ -80,7 +80,7 @@ class DirectUiFlowTest {
         val state = com.razban.app.direct.SessionState(
             mapOf("device" to deviceKey, "server" to serverKey), plan, budget = 8,
         )
-        val mock = MockSignalServer(state, sslContextFromPem(MOCK_CERT_PEM, MOCK_KEY_PEM))
+        val mock = MockSignalServer(state, directSslContextFromPem(DIRECT_MOCK_CERT_PEM, DIRECT_MOCK_KEY_PEM))
         mock.start()
         cleanup.add { mock.close() }
         val stubProfile = DirectProfile.parse(
@@ -237,14 +237,14 @@ class DirectUiFlowTest {
         val dataTls = JSONObject()
             .put("uuid", "11111111-2222-3333-4444-555555555555")
             .put("serverName", "127.0.0.1")
-            .put("certificatePem", MOCK_CERT_PEM)
+            .put("certificatePem", DIRECT_MOCK_CERT_PEM)
         return JSONObject()
             .put("razbanProfile", DirectProfile.KIND)
             .put("name", DirectProfile.DEFAULT_NAME)
             .put("signal", JSONObject()
                 .put("url", url)
                 .put("hostname", "127.0.0.1")
-                .put("caPem", MOCK_CERT_PEM)
+                .put("caPem", DIRECT_MOCK_CERT_PEM)
                 .put("role", "device")
                 .put("hmacKeyHex", hmacHex))
             .put("plan", JSONObject()
