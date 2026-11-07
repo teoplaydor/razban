@@ -266,14 +266,27 @@ class DirectUiFlowTest {
 
     /** Shell uid 2000 HTTP via TUN to 198.51.100.10 (not loopback, not app UID). */
     private fun tunHttpExchange(port: Int, method: String, path: String, body: String, expect: String): TunHttpResult {
-        // printf interprets \r\n; keep the command as one line (no raw CR/LF).
-        val extra = if (body.isNotEmpty()) "Content-Length: ${body.length}\\r\\n" else ""
-        val payload = "$method $path HTTP/1.0\\r\\nHost: tun-probe\\r\\n${extra}\\r\\n$body"
-        val cmd = "printf '$payload' | toybox nc -w 8 198.51.100.10 $port 2>&1"
-        var last = TunHttpResult(false, "")
+        // API 30 UiDevice.executeShellCommand uses Runtime.exec(String), which
+        // tokenizes on whitespace and does not run a shell. A quoted
+        // `printf '...' | nc` therefore never invokes nc (CI returned "'GET").
+        // Write the request and a tiny script, copy them as root into
+        // /data/local/tmp, then `sh script` as uid 2000 (no spaces to split).
+        val extra = if (body.isNotEmpty()) "Content-Length: ${body.length}\r\n" else ""
+        val payload = "$method $path HTTP/1.0\r\nHost: tun-probe\r\n${extra}\r\n$body"
+        val tag = "${method.lowercase()}-${path.trim('/').ifEmpty { "root" }}"
+        val localReq = File(testCtx.cacheDir, "razban-$tag.req")
+        val localSh = File(testCtx.cacheDir, "razban-$tag.sh")
+        localReq.writeBytes(payload.toByteArray(Charsets.ISO_8859_1))
+        val remoteReq = "/data/local/tmp/razban-$tag.req"
+        val remoteSh = "/data/local/tmp/razban-$tag.sh"
+        localSh.writeText("#!/system/bin/sh\ntoybox nc -w 8 198.51.100.10 $port < $remoteReq 2>&1\n")
+        val cpReq = device.executeShellCommand("su 0 cp ${localReq.absolutePath} $remoteReq") ?: ""
+        val cpSh = device.executeShellCommand("su 0 cp ${localSh.absolutePath} $remoteSh") ?: ""
+        val chmod = device.executeShellCommand("su 0 chmod 0755 $remoteSh") ?: ""
+        var last = TunHttpResult(false, "cpReq=${cpReq.take(80)} cpSh=${cpSh.take(80)} chmod=${chmod.take(40)}")
         repeat(3) {
-            val out = device.executeShellCommand(cmd) ?: ""
-            last = TunHttpResult(out.contains(expect), out)
+            val out = device.executeShellCommand("sh $remoteSh") ?: ""
+            last = TunHttpResult(out.contains(expect), "cpReq=${cpReq.take(40)} chmod=${chmod.take(20)} out=$out")
             if (last.ok) return last
             Thread.sleep(400)
         }
