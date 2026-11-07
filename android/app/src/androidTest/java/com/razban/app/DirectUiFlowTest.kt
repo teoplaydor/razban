@@ -235,21 +235,84 @@ class DirectUiFlowTest {
     }
 
     private fun pickFromTestProvider(fileName: String) {
-        // Open roots drawer if present, then the test provider, then the file.
-        val roots = device.findObject(By.descContains("root"))
-            ?: device.findObject(By.desc("Show roots"))
+        // Real system picker: open the roots drawer, select our provider row
+        // (the visible title TextView is not clickable — click its row), then
+        // the seeded file row.
+        openRootsDrawer()
+        val provider = waitForVisible(
+            listOf(FakeProfileDocumentsProvider.TITLE, "RazbanTestDocs", "Razban"),
+            8_000,
+        )
+        assertTrue(
+            "could not see ${FakeProfileDocumentsProvider.TITLE} root in DocumentsUI; ui=${visibleTexts()}",
+            provider != null,
+        )
+        clickNodeOrParent(provider!!)
+        device.waitForIdle(2_000)
+        Thread.sleep(800)
+        dumpPicker("picker-inside-root")
+        val file = waitForVisible(listOf(fileName, "direct-profile"), 8_000)
+        assertTrue("could not see $fileName in DocumentsUI; ui=${visibleTexts()}", file != null)
+        clickNodeOrParent(file!!)
+        device.waitForIdle(2_000)
+    }
+
+    private fun openRootsDrawer() {
+        val btn = device.findObject(By.desc("Show roots"))
             ?: device.findObject(By.descContains("Show roots"))
+            ?: device.findObject(By.descContains("Show root"))
             ?: device.findObject(By.text("Open from"))
-        roots?.click()
+            ?: device.findObject(By.res("com.android.documentsui:id/drawer_layout"))
+            ?: device.findObject(By.descContains("root"))
+        if (btn != null) clickNodeOrParent(btn)
+        device.waitForIdle(1_000)
         Thread.sleep(500)
-        val provider = device.wait(Until.findObject(By.text(FakeProfileDocumentsProvider.TITLE)), 4_000)
-            ?: device.findObject(By.textContains("Razban"))
-        provider?.click()
-        Thread.sleep(500)
-        val file = device.wait(Until.findObject(By.text(fileName)), 4_000)
-            ?: device.findObject(By.textContains("direct-profile"))
-        assertTrue("could not see $fileName in DocumentsUI", file != null)
-        file!!.click()
+    }
+
+    private fun waitForVisible(labels: List<String>, waitMs: Long): androidx.test.uiautomator.UiObject2? {
+        val deadline = System.currentTimeMillis() + waitMs
+        while (System.currentTimeMillis() < deadline) {
+            for (label in labels) {
+                val obj = device.findObject(By.clickable(true).hasDescendant(By.text(label)))
+                    ?: device.findObject(By.clickable(true).hasDescendant(By.textContains(label)))
+                    ?: device.findObject(By.text(label))
+                    ?: device.findObject(By.textContains(label))
+                    ?: device.findObject(By.desc(label))
+                    ?: device.findObject(By.descContains(label))
+                if (obj != null) return obj
+            }
+            Thread.sleep(200)
+        }
+        return null
+    }
+
+    private fun clickNodeOrParent(obj: androidx.test.uiautomator.UiObject2) {
+        var cur: androidx.test.uiautomator.UiObject2? = obj
+        var hops = 0
+        while (cur != null && !cur.isClickable && hops < 8) {
+            cur = cur.parent
+            hops++
+        }
+        (cur ?: obj).click()
+    }
+
+    private fun visibleTexts(): String = try {
+        device.findObjects(By.enabled(true))
+            .mapNotNull { it.text?.takeIf { t -> t.isNotBlank() } ?: it.contentDescription }
+            .filter { !it.isNullOrBlank() }
+            .distinct()
+            .take(50)
+            .joinToString(" | ")
+    } catch (_: Exception) {
+        "?"
+    }
+
+    private fun dumpPicker(name: String) {
+        runCatching {
+            val shots = File(appCtx.getExternalFilesDir(null), "ui-screenshots").apply { mkdirs() }
+            device.takeScreenshot(File(shots, "$name.png"))
+            device.dumpWindowHierarchy(File(shots, "$name.xml"))
+        }
     }
 
     private fun mockDirectJson(url: String, hmacHex: String, peerPort: Int): String {

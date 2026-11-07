@@ -12,7 +12,8 @@ rc=$?
 kill "$LOGCAT_PID" >/dev/null 2>&1 || true
 wait "$LOGCAT_PID" >/dev/null 2>&1 || true
 mkdir -p "$GITHUB_WORKSPACE/android/ui-screenshots" 2>/dev/null || true
-for pkg in com.razban.app.debug com.razban.app.directtest; do
+for pkg in com.razban.app.debug com.razban.app.directtest com.razban.app; do
+  adb shell ls -la "/sdcard/Android/data/$pkg/files" "/sdcard/Android/data/$pkg/files/ui-screenshots" 2>/dev/null || true
   adb pull "/sdcard/Android/data/$pkg/files/ui-screenshots" "$GITHUB_WORKSPACE/android/ui-screenshots/$pkg" 2>/dev/null || true
   adb pull "/sdcard/Android/data/$pkg/files/e2e-report.txt" "$GITHUB_WORKSPACE/android/ui-screenshots/" 2>/dev/null || true
 done
