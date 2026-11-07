@@ -426,7 +426,7 @@ private class FixtureXrayServer(
             val certLines = JSONArray().also { arr -> certPem.trim().lines().forEach { arr.put(it) } }
             val keyLines = JSONArray().also { arr -> keyPem.trim().lines().forEach { arr.put(it) } }
             val cfg = JSONObject()
-                .put("log", JSONObject().put("loglevel", "warning"))
+                .put("log", JSONObject().put("loglevel", "debug").put("access", "none"))
                 .put("inbounds", JSONArray().put(
                     JSONObject()
                         .put("listen", "127.0.0.1")
@@ -443,13 +443,31 @@ private class FixtureXrayServer(
                                     JSONObject().put("certificate", certLines).put("key", keyLines)
                                 ))))
                 ))
-                .put("outbounds", JSONArray().put(JSONObject().put("protocol", "freedom").put("tag", "direct")))
+                .put("outbounds", JSONArray().put(
+                    JSONObject().put("protocol", "freedom").put("tag", "direct")
+                        // Xray 26+ freedom default-blocks private/docs ranges
+                        // (127.0.0.0/8, 198.51.100.0/24, …) from VLESS and
+                        // blackholes them for 30–90s. The CI origin lives on
+                        // those dests; the isolated DE edge must keep the
+                        // default (do not copy this allow-list there).
+                        .put("settings", JSONObject().put("finalRules", JSONArray().put(
+                            JSONObject().put("action", "allow").put("ip", JSONArray()
+                                .put("127.0.0.0/8").put("::1/128").put("198.51.100.0/24"))
+                        )))
+                ))
             val cfgFile = File(ctx.cacheDir, "xray-fixture-server.json")
             cfgFile.writeText(cfg.toString())
             return try {
                 val p = ProcessBuilder(bin.absolutePath, "run", "-c", cfgFile.absolutePath)
                     .redirectErrorStream(true)
                     .start()
+                Thread {
+                    try {
+                        p.inputStream.bufferedReader().forEachLine {
+                            android.util.Log.d("razban-fixture", it)
+                        }
+                    } catch (_: Exception) {}
+                }.apply { isDaemon = true; name = "razban-fixture-log" }.start()
                 val deadline = System.currentTimeMillis() + 8000
                 var up = false
                 while (System.currentTimeMillis() < deadline) {
@@ -463,9 +481,11 @@ private class FixtureXrayServer(
                     }
                 }
                 if (!up) {
+                    android.util.Log.e("razban-fixture", "fixture xray never accepted on $listen alive=${p.isAlive}")
                     p.destroy()
                     FixtureXrayServer(-1, null)
                 } else {
+                    android.util.Log.i("razban-fixture", "fixture xray up on 127.0.0.1:$listen")
                     FixtureXrayServer(listen, p)
                 }
             } catch (_: Exception) {
