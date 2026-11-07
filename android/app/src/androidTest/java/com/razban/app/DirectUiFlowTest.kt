@@ -4,6 +4,8 @@ import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.razban.app.bg.RazbanVpnService
@@ -235,25 +237,25 @@ class DirectUiFlowTest {
     }
 
     private fun pickFromTestProvider(fileName: String) {
-        // Real system picker: open the roots drawer, select our provider row
-        // (the visible title TextView is not clickable — click its row), then
-        // the seeded file row.
+        // Real system picker. The root title TextView is not clickable, and its
+        // clickable ancestor is the whole drawer — UiObject2.click() then hits
+        // Downloads (log: "Root changed to: Downloads"). Tap the label's own
+        // screen coordinates so the row receives the gesture.
         openRootsDrawer()
-        val provider = waitForVisible(
-            listOf(FakeProfileDocumentsProvider.TITLE, "RazbanTestDocs", "Razban"),
-            8_000,
-        )
         assertTrue(
             "could not see ${FakeProfileDocumentsProvider.TITLE} root in DocumentsUI; ui=${visibleTexts()}",
-            provider != null,
+            revealAndTap(FakeProfileDocumentsProvider.TITLE, "RazbanTestDocs"),
         )
-        clickNodeOrParent(provider!!)
         device.waitForIdle(2_000)
-        Thread.sleep(800)
+        Thread.sleep(600)
         dumpPicker("picker-inside-root")
-        val file = waitForVisible(listOf(fileName, "direct-profile"), 8_000)
-        assertTrue("could not see $fileName in DocumentsUI; ui=${visibleTexts()}", file != null)
-        clickNodeOrParent(file!!)
+        if (findLabel(fileName, "direct-profile") == null) {
+            openRootsDrawer()
+            revealAndTap(FakeProfileDocumentsProvider.TITLE, "RazbanTestDocs")
+            device.waitForIdle(2_000)
+            dumpPicker("picker-inside-root-retry")
+        }
+        assertTrue("could not see $fileName in DocumentsUI; ui=${visibleTexts()}", revealAndTap(fileName, "direct-profile"))
         device.waitForIdle(2_000)
     }
 
@@ -262,38 +264,57 @@ class DirectUiFlowTest {
             ?: device.findObject(By.descContains("Show roots"))
             ?: device.findObject(By.descContains("Show root"))
             ?: device.findObject(By.text("Open from"))
-            ?: device.findObject(By.res("com.android.documentsui:id/drawer_layout"))
-            ?: device.findObject(By.descContains("root"))
-        if (btn != null) clickNodeOrParent(btn)
+        if (btn != null) {
+            val b = btn.visibleBounds
+            device.click(b.centerX(), b.centerY())
+        }
         device.waitForIdle(1_000)
         Thread.sleep(500)
     }
 
-    private fun waitForVisible(labels: List<String>, waitMs: Long): androidx.test.uiautomator.UiObject2? {
-        val deadline = System.currentTimeMillis() + waitMs
-        while (System.currentTimeMillis() < deadline) {
-            for (label in labels) {
-                val obj = device.findObject(By.clickable(true).hasDescendant(By.text(label)))
-                    ?: device.findObject(By.clickable(true).hasDescendant(By.textContains(label)))
-                    ?: device.findObject(By.text(label))
-                    ?: device.findObject(By.textContains(label))
-                    ?: device.findObject(By.desc(label))
-                    ?: device.findObject(By.descContains(label))
-                if (obj != null) return obj
-            }
-            Thread.sleep(200)
+    private fun findLabel(vararg labels: String): UiObject2? {
+        for (label in labels) {
+            val obj = device.findObject(By.text(label))
+                ?: device.findObject(By.desc(label))
+                ?: device.findObject(By.textContains(label))
+                ?: device.findObject(By.descContains(label))
+            if (obj != null) return obj
         }
         return null
     }
 
-    private fun clickNodeOrParent(obj: androidx.test.uiautomator.UiObject2) {
-        var cur: androidx.test.uiautomator.UiObject2? = obj
-        var hops = 0
-        while (cur != null && !cur.isClickable && hops < 8) {
-            cur = cur.parent
-            hops++
+    private fun revealAndTap(vararg labels: String): Boolean {
+        val deadline = System.currentTimeMillis() + 10_000
+        var node = findLabel(*labels)
+        while (node == null && System.currentTimeMillis() < deadline) {
+            scrollDrawer()
+            Thread.sleep(250)
+            node = findLabel(*labels)
         }
-        (cur ?: obj).click()
+        if (node == null) return false
+        val bounds = node.visibleBounds
+        if (bounds.width() <= 1 || bounds.centerY() !in 1 until (device.displayHeight - 1)) {
+            scrollDrawer()
+            node = findLabel(*labels) ?: return false
+        }
+        val b = node.visibleBounds
+        device.click(b.centerX(), b.centerY())
+        return true
+    }
+
+    private fun scrollDrawer() {
+        val scroller = device.findObjects(By.scrollable(true)).firstOrNull()
+        if (scroller != null) {
+            scroller.scroll(Direction.DOWN, 0.6f)
+        } else {
+            device.swipe(
+                device.displayWidth / 5,
+                (device.displayHeight * 0.7).toInt(),
+                device.displayWidth / 5,
+                (device.displayHeight * 0.35).toInt(),
+                25,
+            )
+        }
     }
 
     private fun visibleTexts(): String = try {
