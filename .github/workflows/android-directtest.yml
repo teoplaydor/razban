@@ -175,7 +175,7 @@ jobs:
           if unzip -l "$APK" | grep -q "assets/default-config.json"; then
             echo "::error::APK contains default-config.json"; exit 1
           fi
-          python3 - <<'PY'
+          python3 - "$APK" <<'PY'
           import sys, zipfile
           apk = sys.argv[1]
           needle = b"-----BEGIN "
@@ -194,7 +194,6 @@ jobs:
               sys.exit(1)
           print("no PEM private keys outside webui placeholder assets")
           PY
-            "$APK"
           AAPT="$ANDROID_SDK_ROOT/build-tools/34.0.0/aapt"
           BADGE=$("$AAPT" dump badging "$APK")
           echo "$BADGE" | head -5
