@@ -4,6 +4,9 @@ import android.content.Context
 import android.webkit.JavascriptInterface
 import com.razban.app.bg.RazbanVpnService
 import com.razban.app.config.ConfigStore
+import com.razban.app.config.ProfileStore
+import com.razban.app.config.ProfileSwitch
+import com.razban.app.diag.DiagnosticReporter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +30,7 @@ class WebUiBridge(
     private val ctx: Context,
     private val onConnect: () -> Unit,
     private val onDisconnect: () -> Unit,
+    private val onImportDocument: (() -> Unit)? = null,
 ) {
     /** Set by the Activity: posts a JSON string to JS (window.__razbanDeliver). */
     var deliver: (String) -> Unit = {}
@@ -72,6 +76,10 @@ class WebUiBridge(
             .put("data", ctx.filesDir.absolutePath)
 
         "vpn.state" -> stateString()
+        "files.importDocument" -> {
+            onImportDocument?.invoke()
+            JSONObject().put("ok", true).put("started", true)
+        }
         "vpn.connect" -> { onConnect(); true }
         "vpn.disconnect" -> { onDisconnect(); true }
         "vpn.stats" -> com.razban.app.bg.CoreStatus.statsJson(
@@ -84,6 +92,12 @@ class WebUiBridge(
         // egress to a RU IP / what yandex.ru resolves to). Cached at Connect.
         "diag.last" -> com.razban.app.bg.Diagnostics.last
             ?: JSONObject().put("verdict", "диагностика ещё не запускалась — подключитесь")
+        "diagUpload.get" -> DiagnosticReporter.statusJson(ctx)
+        "diagUpload.set" -> {
+            val enabled = (params as? JSONObject)?.optBoolean("enabled", false) ?: false
+            DiagnosticReporter.setEnabled(ctx, enabled)
+            DiagnosticReporter.statusJson(ctx)
+        }
 
         "settings.get" -> settingsJson()
         "settings.set" -> { saveSettings(params); true }
@@ -94,6 +108,24 @@ class WebUiBridge(
         // Servers/bundles: the phone runs a bundled sing-box config. Surface its
         // protocol outbounds so the Servers tab shows them (not "0 of 0").
         "servers.list" -> serversJson()
+        "profiles.list" -> ProfileStore.listJson(ctx)
+        "profiles.select" -> {
+            val name = when (params) {
+                is JSONObject -> params.optString("name", "")
+                is String -> params
+                else -> ""
+            }
+            if (ProfileSwitch.blockedByTunnel(RazbanVpnService.lastStatus.name)) {
+                JSONObject()
+                    .put("ok", false)
+                    .put("error", ProfileSwitch.DISCONNECT_REQUIRED)
+                    .put("active", ProfileStore.activeName(ctx) ?: JSONObject.NULL)
+            } else {
+                val ok = name.isNotEmpty() && ProfileStore.select(ctx, name)
+                if (ok) pushEvent("servers.changed", true)
+                JSONObject().put("ok", ok).put("active", ProfileStore.activeName(ctx) ?: JSONObject.NULL)
+            }
+        }
         "bundles.list" -> bundlesJson()
         // Live per-protocol health for the bundle card. We don't have the admin
         // agent on the phone, so reflect the tunnel state: when connected, the
@@ -124,12 +156,23 @@ class WebUiBridge(
                 is String -> params
                 else -> ""
             }
+            val wasDirect = ProfileStore.isDirectActive(ctx)
             val n = com.razban.app.bg.CoreCode.redeem(ctx, code)
-            if (RazbanVpnService.lastStatus == RazbanVpnService.Status.Started)
+            val connected = ProfileSwitch.blockedByTunnel(RazbanVpnService.lastStatus.name)
+            // reload() only swaps sing-box JSON. Switching away from Direct
+            // while connected would leave the adapter/sidecar running, so ask
+            // the user to disconnect instead of reporting a live switch.
+            val requiresReconnect = connected && wasDirect
+            if (connected && !wasDirect) {
                 ctx.startService(android.content.Intent(ctx, RazbanVpnService::class.java)
                     .setAction(RazbanVpnService.ACTION_RELOAD))
+            }
             pushEvent("servers.changed", true)
-            JSONObject().put("ok", true).put("outbounds", n)
+            JSONObject()
+                .put("ok", true)
+                .put("outbounds", n)
+                .put("active", ProfileStore.activeName(ctx) ?: JSONObject.NULL)
+                .put("requiresReconnect", requiresReconnect)
         }
 
         // The Servers page "Из буфера" button calls servers.addMany({text}).
@@ -144,7 +187,15 @@ class WebUiBridge(
                 is String -> params
                 else -> ""
             }
-            if (text.trimStart().startsWith("{") && text.contains("\"outbounds\"")) {
+            val imported = ProfileStore.importPayload(ctx, text)
+            if (imported.ok) {
+                pushEvent("servers.changed", true)
+                JSONObject().put("count", imported.count)
+                    .put("profile", imported.name)
+                    .put("kind", imported.kind)
+            } else if (imported.error != null && text.contains("razbanProfile")) {
+                JSONObject().put("count", 0).put("error", imported.error)
+            } else if (text.trimStart().startsWith("{") && text.contains("\"outbounds\"")) {
                 ConfigStore.importConfig(ctx, text)
                 pushEvent("servers.changed", true)   // tell the UI to re-fetch the list
                 JSONObject().put("count", 1)
@@ -175,12 +226,11 @@ class WebUiBridge(
 
     // ───────────────────────── helpers ─────────────────────────
 
-    private fun stateString(): String = when (RazbanVpnService.lastStatus) {
-        RazbanVpnService.Status.Started -> "connected"
-        RazbanVpnService.Status.Starting -> "connecting"
-        RazbanVpnService.Status.Stopping -> "disconnecting"
-        else -> "disconnected"
-    }
+    private fun stateString(): String = com.razban.app.direct.VpnUiState.publicLabel(
+        RazbanVpnService.lastStatus.name,
+        RazbanVpnService.lastChannelState,
+        ProfileStore.isDirectActive(ctx),
+    )
 
     private fun appVersion(): String = try {
         ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "0.1.0"
@@ -264,12 +314,15 @@ class WebUiBridge(
 
     private fun serversJson(): JSONObject {
         val servers = JSONArray()
+        val direct = ProfileStore.isDirectActive(ctx)
         for ((tag, type, addr) in ConfigStore.protocolOutbounds(ctx)) {
+            val showReality = type == "vless" && !direct
             servers.put(JSONObject()
                 .put("id", tag).put("name", tag).put("protocol", type)
                 .put("server", addr.first).put("port", addr.second)
                 .put("pingMs", 0)
-                .put("reality", JSONObject().put("enabled", type == "vless")))
+                .put("security", if (direct && type == "vless") "tls" else if (showReality) "reality" else "")
+                .put("reality", JSONObject().put("enabled", showReality)))
         }
         return JSONObject().put("servers", servers).put("groups", JSONArray())
     }
@@ -476,7 +529,10 @@ class WebUiBridge(
             is String -> params
             else -> params?.toString() ?: return
         }
-        if (cfg.trimStart().startsWith("{")) ConfigStore.importConfig(ctx, cfg)
+        if (cfg.contains("\"razbanProfile\"")) {
+            val imported = ProfileStore.importPayload(ctx, cfg)
+            if (!imported.ok) throw IllegalArgumentException(imported.error ?: "direct_import")
+        } else if (cfg.trimStart().startsWith("{")) ConfigStore.importConfig(ctx, cfg)
     }
 
     /** Launchable (user-facing) installed apps for the Apps tab, so the user can

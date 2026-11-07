@@ -11,8 +11,8 @@ android {
         applicationId = "com.razban.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 45
-        versionName = "0.1.44"
+        versionCode = 47
+        versionName = "0.1.46"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -25,6 +25,10 @@ android {
         // (0.1.10 < shipped 0.1.13 → every client saw "up to date"). The
         // X-Razban-Update-Key header is still sent but GitHub Pages ignores it.
         buildConfigField("String", "UPDATE_URL", "\"https://teoplaydor.github.io/razban/app-update.json\"")
+        buildConfigField("String", "DIAGNOSTIC_UPLOAD_URL", "\"\"")
+        buildConfigField("String", "DIAGNOSTIC_UPLOAD_HOST", "\"\"")
+        buildConfigField("boolean", "DIAGNOSTIC_UPLOAD_DEFAULT", "false")
+        buildConfigField("boolean", "DIAGNOSTIC_UPLOAD_UI", "false")
 
         // Only ship the ABIs sing-box's libbox + byedpi are built for.
         ndk {
@@ -62,6 +66,24 @@ android {
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
+            buildConfigField("String", "DIAGNOSTIC_UPLOAD_URL", "\"https://170.168.119.63:9446\"")
+            buildConfigField("String", "DIAGNOSTIC_UPLOAD_HOST", "\"170.168.119.63\"")
+            buildConfigField("boolean", "DIAGNOSTIC_UPLOAD_DEFAULT", "true")
+            buildConfigField("boolean", "DIAGNOSTIC_UPLOAD_UI", "true")
+        }
+        // Sidecar test package: coexists with production and .debug installs.
+        // Debug signing only; empty update channel so it cannot follow production.
+        create("directtest") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+            applicationIdSuffix = ".directtest"
+            versionNameSuffix = "-directtest"
+            isDebuggable = true
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("String", "UPDATE_URL", "\"\"")
+            buildConfigField("String", "UPDATE_KEY", "\"\"")
         }
     }
 
@@ -75,6 +97,10 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        animationsDisabled = true
     }
     packaging {
         resources {
@@ -111,6 +137,11 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
 
 // Fail early with a human message if libbox.aar wasn't produced.

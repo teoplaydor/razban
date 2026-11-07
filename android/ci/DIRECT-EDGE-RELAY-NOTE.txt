@@ -1,0 +1,8 @@
+2026-11-07 Europe/Moscow (UTC+3): isolated DE edge razban-direct-edge
+removed the default 20s relay cap (server_agent.py relay limit=None).
+Production :443 / AWG / routes / peers / shaper were not touched.
+Backup on DE: /opt/razban-direct-edge/server_agent.py.bak-20261107-t36u
+Rollback (edge only):
+  sudo cp /opt/razban-direct-edge/server_agent.py.bak-20261107-t36u /opt/razban-direct-edge/server_agent.py
+  sudo systemctl restart razban-direct-edge
+Do not restart razban-direct-core or any production 443 unit as part of this rollback.

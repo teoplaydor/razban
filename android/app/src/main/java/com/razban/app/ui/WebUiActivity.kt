@@ -25,7 +25,10 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.razban.app.bg.RazbanVpnService
 import com.razban.app.bridge.WebUiBridge
+import com.razban.app.diag.DiagnosticReporter
 import com.razban.app.config.ConfigStore
+import com.razban.app.config.ProfileImport
+import com.razban.app.config.ProfileStore
 import org.json.JSONObject
 
 /**
@@ -38,6 +41,15 @@ class WebUiActivity : AppCompatActivity() {
 
     private lateinit var web: WebView
     private lateinit var bridge: WebUiBridge
+    private var diagStatusView: android.widget.TextView? = null
+
+    private val openProfileDocument = registerForActivityResult(OpenAnyDocument()) { uri ->
+        if (uri == null) {
+            android.widget.Toast.makeText(this, "Импорт файла отменён", android.widget.Toast.LENGTH_SHORT).show()
+            return@registerForActivityResult
+        }
+        finishDocumentImport(uri)
+    }
 
     private val vpnConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (it.resultCode == Activity.RESULT_OK) startVpn()
@@ -47,11 +59,20 @@ class WebUiActivity : AppCompatActivity() {
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, i: Intent?) {
             val s = i?.getStringExtra(RazbanVpnService.EXTRA_STATUS)
-            val ui = when (s) {
+            val ui = i?.getStringExtra(RazbanVpnService.EXTRA_UI_STATE) ?: when (s) {
                 "Started" -> "connected"; "Starting" -> "connecting"
                 "Stopping" -> "disconnecting"; else -> "disconnected"
             }
-            bridge.pushEvent("vpn.state", ui)
+            // Direct profiles must not report connected from TUN-up alone.
+            val mapped = if (s == "Started" && com.razban.app.config.ProfileStore.isDirectActive(this@WebUiActivity)) {
+                i?.getStringExtra(RazbanVpnService.EXTRA_UI_STATE)
+                    ?: com.razban.app.direct.VpnUiState.publicLabel(
+                        s ?: "Stopped",
+                        RazbanVpnService.lastChannelState,
+                        true,
+                    )
+            } else ui
+            bridge.pushEvent("vpn.state", mapped)
         }
     }
 
@@ -64,11 +85,12 @@ class WebUiActivity : AppCompatActivity() {
         }
 
         web = WebView(this)
-        setContentView(web)
+        setContentView(wrapWithChrome(web))
         WebView.setWebContentsDebuggingEnabled(true)
 
         bridge = WebUiBridge(applicationContext, onConnect = { runOnUiThread { requestConnect() } },
-            onDisconnect = { runOnUiThread { stopVpn() } })
+            onDisconnect = { runOnUiThread { stopVpn() } },
+            onImportDocument = { runOnUiThread { launchProfileDocumentPicker() } })
         // Guard with `&&`: a native push (e.g. the auto-connect vpn.state) can
         // fire before the document-start shim defined __razbanDeliver, especially
         // on old WebViews — without the guard that logs "is not a function" and
@@ -114,6 +136,7 @@ class WebUiActivity : AppCompatActivity() {
         }
 
         web.loadUrl("https://appassets.androidplatform.net/webui/index.html")
+        handleLaunchImport(intent)
 
         // NO auto-connect. The tunnel must come up ONLY on an explicit user tap of
         // the Connect button (which arrives as the `onConnect` callback →
@@ -141,12 +164,27 @@ class WebUiActivity : AppCompatActivity() {
         web.postDelayed({ maybeImportConfigFromClipboard() }, 700)
     }
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLaunchImport(intent)
+    }
+
     private fun maybeImportConfigFromClipboard() {
         if (ConfigStore.hasConfig(this)) return
         try {
             val cm = getSystemService(android.content.ClipboardManager::class.java) ?: return
             val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim() ?: return
-            if (!text.startsWith("{") || !text.contains("\"outbounds\"")) return
+            if (!text.startsWith("{")) return
+            if (text.contains("\"razbanProfile\"")) {
+                val imported = ProfileStore.importPayload(this, text)
+                if (imported.ok) {
+                    android.widget.Toast.makeText(this, "Импортирован профиль ${imported.name}", android.widget.Toast.LENGTH_LONG).show()
+                    bridge.pushEvent("servers.changed", true)
+                }
+                return
+            }
+            if (!text.contains("\"outbounds\"")) return
             ConfigStore.importConfig(this, text)
             android.widget.Toast.makeText(this, "Конфигурация импортирована из буфера", android.widget.Toast.LENGTH_LONG).show()
             bridge.pushEvent("vpn.log", "Конфигурация импортирована из буфера")
@@ -162,6 +200,112 @@ class WebUiActivity : AppCompatActivity() {
     override fun onDestroy() {
         web.destroy()
         super.onDestroy()
+    }
+
+    private fun wrapWithChrome(webView: WebView): android.view.View {
+        val wantDiag = com.razban.app.BuildConfig.DIAGNOSTIC_UPLOAD_UI
+        if (!wantDiag) return webView
+        val root = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        root.addView(buildDiagBar())
+        root.addView(webView, android.widget.LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
+        ))
+        refreshDiagStatus()
+        webView.post(object : Runnable {
+            override fun run() {
+                refreshDiagStatus()
+                webView.postDelayed(this, 2000)
+            }
+        })
+        return root
+    }
+
+    private fun buildDiagBar(): android.view.View {
+        val bar = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            setPadding(32, 20, 32, 20)
+            setBackgroundColor(0xFF1B2A1C.toInt())
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        val status = android.widget.TextView(this).apply {
+            setTextColor(0xFFE8E8E8.toInt())
+            textSize = 13f
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val toggle = android.widget.Switch(this).apply {
+            text = "Диагностика"
+            setTextColor(0xFFE8E8E8.toInt())
+            isChecked = DiagnosticReporter.isEnabled(this@WebUiActivity)
+            setOnCheckedChangeListener { _, checked ->
+                DiagnosticReporter.setEnabled(this@WebUiActivity, checked)
+                refreshDiagStatus()
+            }
+        }
+        diagStatusView = status
+        bar.addView(status)
+        bar.addView(toggle)
+        return bar
+    }
+
+    fun launchProfileDocumentPicker() {
+        openProfileDocument.launch(Unit)
+    }
+
+    private fun handleLaunchImport(intent: android.content.Intent?) {
+        if (intent == null) return
+        val action = intent.action ?: return
+        val uri = when (action) {
+            android.content.Intent.ACTION_VIEW -> intent.data
+            android.content.Intent.ACTION_SEND -> {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM)
+                }
+            }
+            else -> null
+        }
+        val extraText = if (action == android.content.Intent.ACTION_SEND) {
+            intent.getStringExtra(android.content.Intent.EXTRA_TEXT)
+        } else null
+        when {
+            uri != null -> finishDocumentImport(uri)
+            !extraText.isNullOrBlank() -> applyImportResult(ProfileImport.fromText(this, extraText), "отправки")
+        }
+    }
+
+    private fun finishDocumentImport(uri: android.net.Uri) {
+        applyImportResult(ProfileImport.fromUri(this, uri), "файла")
+    }
+
+    private fun applyImportResult(result: ProfileStore.ImportResult, source: String) {
+        if (result.ok) {
+            android.widget.Toast.makeText(this, "Импортирован профиль ${result.name}", android.widget.Toast.LENGTH_LONG).show()
+            if (this::bridge.isInitialized) bridge.pushEvent("servers.changed", true)
+        } else {
+            android.widget.Toast.makeText(
+                this,
+                "Не удалось импортировать из $source (${result.error ?: "ошибка"})",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun refreshDiagStatus() {
+        val view = diagStatusView ?: return
+        val st = DiagnosticReporter.statusJson(this)
+        val enabled = st.optBoolean("enabled")
+        val queued = st.optInt("queued")
+        val status = st.optString("status")
+        val err = if (st.isNull("lastError")) "" else st.optString("lastError")
+        view.text = when {
+            !enabled -> "Диагностика: выкл"
+            err.isNotEmpty() && status != "ok" -> "Диагностика: $status · очередь $queued"
+            else -> "Диагностика: $status · очередь $queued"
+        }
     }
 
     private fun requestConnect() {

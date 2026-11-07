@@ -2,6 +2,7 @@ package com.razban.app.bg
 
 import android.content.Context
 import com.razban.app.config.ConfigStore
+import com.razban.app.config.ProfileStore
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -59,6 +60,8 @@ object CoreCode {
         // adaptForAndroid runs inside importConfig; marks config as user-provided
         // so an app update won't clobber the code-imported server.
         ConfigStore.importConfig(ctx, json)
+        // Always record as a named relay profile and clear stale Direct state.
+        ProfileStore.recordRedeemedRelay(ctx)
         return outs
     }
 

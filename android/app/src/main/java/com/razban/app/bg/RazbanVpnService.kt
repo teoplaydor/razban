@@ -5,6 +5,11 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.razban.app.config.ConfigStore
+import com.razban.app.config.ProfileStore
+import com.razban.app.direct.DirectChannelState
+import com.razban.app.direct.DirectTcpAdapter
+import com.razban.app.direct.VpnUiState
+import com.razban.app.diag.DiagnosticReporter
 import io.nekohasekai.libbox.CommandServer
 import io.nekohasekai.libbox.CommandServerHandler
 import io.nekohasekai.libbox.ConnectionOwner
@@ -47,6 +52,7 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     private var commandServer: CommandServer? = null
     private var tunFd: ParcelFileDescriptor? = null
+    private var directAdapter: DirectTcpAdapter? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
@@ -71,12 +77,16 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     private fun startTunnel() {
         status = Status.Starting
+        lastChannelState = DirectChannelState.Idle
+        val startedAt = System.currentTimeMillis()
+        DiagnosticReporter.record(this, "vpn_start")
         Notifications.startForeground(this)
         // Keep the VpnService's underlying network in sync with the physical
         // (NOT_VPN) network the monitor tracks — required for the core's
         // protected sockets to actually egress (SFA does this too).
         DefaultNetworkMonitor.onNetwork = { net ->
             try { setUnderlyingNetworks(if (net != null) arrayOf(net) else null) } catch (_: Throwable) {}
+            if (net == null) try { directAdapter?.failClosed("no_underlying_network") } catch (_: Throwable) {}
         }
         // Seed the underlying network SYNCHRONOUSLY now, before the core runs — the
         // async ConnectivityManager callback usually hasn't fired by the time the
@@ -94,10 +104,37 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 // Reality servers run through the xray sidecar (sing-box uTLS is
                 // broken in our libbox build). Start it before sing-box so its
                 // local SOCKS is listening when sing-box's socks outbound dials it.
+                if (ProfileStore.isDirectActive(this@RazbanVpnService)) {
+                    val dcfg = ProfileStore.currentDirect(this@RazbanVpnService)
+                        ?: error("DirectTCPexperimental selected but runtime config missing")
+                    val adapter = DirectTcpAdapter(
+                        dcfg,
+                        networkProvider = {
+                            DefaultNetworkMonitor.currentNetwork
+                                ?: DefaultNetworkMonitor.seed(applicationContext)
+                        },
+                        protectSocket = { s -> protect(s) },
+                    )
+                    adapter.onDiagnostic = { stage, error, duration ->
+                        DiagnosticReporter.record(applicationContext, stage, error, duration)
+                    }
+                    adapter.onChannelState = { state ->
+                        lastChannelState = state
+                        broadcastStatus()
+                    }
+                    adapter.start()
+                    directAdapter = adapter
+                    lastChannelState = DirectChannelState.Signaling
+                    android.util.Log.d(TAG, "startTunnel: direct adapter up")
+                }
                 if (ConfigStore.hasXray(this@RazbanVpnService)) {
+                    DiagnosticReporter.record(this@RazbanVpnService, "xray_start")
                     val xcfg = ConfigStore.xrayConfig(this@RazbanVpnService)
-                    if (xcfg == null || !XrayProcess.start(this@RazbanVpnService, xcfg))
+                    if (xcfg == null || !XrayProcess.start(this@RazbanVpnService, xcfg)) {
+                        DiagnosticReporter.record(this@RazbanVpnService, "xray_failed", "xray_start_failed")
                         error("xray sidecar failed to start")
+                    }
+                    DiagnosticReporter.record(this@RazbanVpnService, "xray_ok")
                     android.util.Log.d(TAG, "startTunnel: xray sidecar up on 127.0.0.1:${XrayProcess.SOCKS_PORT}")
                 }
 
@@ -121,6 +158,18 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 server.startOrReloadService(config, override)
                 android.util.Log.d(TAG, "startTunnel: service started OK")
                 status = Status.Started
+                if (ProfileStore.isDirectActive(this@RazbanVpnService) &&
+                    lastChannelState != DirectChannelState.DataWorking
+                ) {
+                    if (lastChannelState == DirectChannelState.Idle) {
+                        lastChannelState = DirectChannelState.TunUp
+                    }
+                }
+                DiagnosticReporter.record(
+                    this@RazbanVpnService,
+                    "vpn_started",
+                    durationMs = System.currentTimeMillis() - startedAt,
+                )
                 broadcastStatus()
                 // Subscribe to the core's live status stream → real up/down
                 // numbers for the UI (vpn.stats / throughput bars).
@@ -128,7 +177,14 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 // Live foreground notification: flips the stale "Подключение" to
                 // "Подключено" + live speed/session totals each status tick (~1s).
                 CoreStatus.onTick = {
-                    try { Notifications.update(this@RazbanVpnService, CoreStatus.notifLine()) } catch (_: Exception) {}
+                    try {
+                        val title = VpnUiState.notifTitle(
+                            status.name,
+                            lastChannelState,
+                            ProfileStore.isDirectActive(this@RazbanVpnService),
+                        )
+                        Notifications.update(this@RazbanVpnService, CoreStatus.notifLine(title))
+                    } catch (_: Exception) {}
                 }
                 // Runtime domain classifier: GeoIP-pins observed RU services to
                 // direct (safe — see GeoClassifier). Applies via reload (hot).
@@ -158,6 +214,18 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "startTunnel FAILED", t)
                 writeDebugMessage("start failed: ${t.message}")
+                val code = when (t.message) {
+                    "no config imported" -> "no_config"
+                    "xray sidecar failed to start" -> "xray_start_failed"
+                    "DirectTCPexperimental selected but runtime config missing" -> "no_config"
+                    else -> "unknown"
+                }
+                DiagnosticReporter.record(
+                    this@RazbanVpnService,
+                    "vpn_failed",
+                    code,
+                    System.currentTimeMillis() - startedAt,
+                )
                 stopTunnel()
             }
         }
@@ -179,16 +247,20 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     private fun stopTunnel() {
         if (status == Status.Stopping || status == Status.Stopped) return
         status = Status.Stopping
+        DiagnosticReporter.record(this, "vpn_stop")
         scope.launch {
             CoreStatus.onTick = null
             GeoClassifier.stop()
             CoreStatus.stop()
+            try { directAdapter?.stop() } catch (_: Throwable) {}
+            directAdapter = null
             XrayProcess.stop()
             try { commandServer?.closeService() } catch (_: Throwable) {}
             try { commandServer?.close() } catch (_: Throwable) {}
             commandServer = null
             try { tunFd?.close() } catch (_: Throwable) {}
             tunFd = null
+            lastChannelState = DirectChannelState.Idle
             status = Status.Stopped
             broadcastStatus()
             Notifications.stopForeground(this@RazbanVpnService)
@@ -209,8 +281,15 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     private fun broadcastStatus() {
+        val ui = VpnUiState.publicLabel(
+            status.name,
+            lastChannelState,
+            ProfileStore.isDirectActive(this),
+        )
         sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName)
-            .putExtra(EXTRA_STATUS, status.name))
+            .putExtra(EXTRA_STATUS, status.name)
+            .putExtra(EXTRA_CHANNEL, lastChannelState.name)
+            .putExtra(EXTRA_UI_STATE, ui))
     }
 
     /** Pre-resolve common RU/news/video/AI hosts right after Connect so the user's
@@ -296,15 +375,22 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         // libbox surfaces them back through TunOptions too).
         options.includePackage.let { while (it.hasNext()) tryAddAllowed(builder, it.next()) }
         options.excludePackage.let { while (it.hasNext()) tryAddDisallowed(builder, it.next()) }
-        // xray sidecar mode: exclude our own app from the TUN so xray's socket to
-        // the server egresses on the physical NIC instead of looping back in.
-        if (ConfigStore.hasXray(this)) tryAddDisallowed(builder, packageName)
-        // NOTE: we intentionally do NOT exclude our own package. The command
-        // channel is a unix socket (not network), so it isn't captured by the
-        // TUN, and routing our own update/probe traffic through the tunnel is
-        // fine for a privacy tool. (When byedpi is bundled later it gets its
-        // own process-name/uid exclusion — see TODO.) Keeping self IN the tun
-        // is also what lets the instrumented VPN test generate routable traffic.
+        // xray sidecar mode: exclude our own app from the TUN so xray's socket
+        // to the server egresses on the physical NIC instead of looping back in.
+        // Also exclude the instrumented test package if it is installed: the
+        // CI fixture VLESS server is started from that UID and must egress
+        // like the isolated DE edge (which is not behind this TUN). Capturing
+        // it hairpins freedom outbounds into the single mux parent and stalls
+        // SOCKS to the local origin even when the channel is DataWorking.
+        // Missing package is ignored by tryAddDisallowed.
+        if (ConfigStore.hasXray(this)) {
+            tryAddDisallowed(builder, packageName)
+            tryAddDisallowed(builder, "$packageName.test")
+        }
+        // NOTE: when xray is not running we intentionally do NOT exclude our
+        // own package. The command channel is a unix socket (not network), so
+        // it isn't captured by the TUN, and routing our own update/probe
+        // traffic through the tunnel is fine for a privacy tool.
 
         val pfd = builder.establish() ?: error("VpnService.Builder.establish() returned null")
         tunFd = pfd
@@ -398,11 +484,18 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         const val ACTION_RELOAD = "com.razban.app.RELOAD"
         const val ACTION_STATUS = "com.razban.app.STATUS"
         const val EXTRA_STATUS = "status"
+        const val EXTRA_CHANNEL = "channel"
+        const val EXTRA_UI_STATE = "ui_state"
 
         /** Last status, readable from the test process (same process as the
          *  service). Not for production logic — UI uses the broadcast. */
         @Volatile
         var lastStatus: Status = Status.Stopped
-            private set
+            internal set
+
+        /** Direct data-channel state. Idle for relay profiles. */
+        @Volatile
+        var lastChannelState: DirectChannelState = DirectChannelState.Idle
+            internal set
     }
 }
