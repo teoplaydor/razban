@@ -176,7 +176,18 @@ data class DirectProfile(
                 .put("route", JSONObject()
                     .put("rules", JSONArray()
                         .put(JSONObject().put("action", "sniff"))
-                        .put(JSONObject().put("protocol", "dns").put("action", "hijack-dns")))
+                        .put(JSONObject().put("protocol", "dns").put("action", "hijack-dns"))
+                        // TUN self-address (172.19.0.1/30). Android/apps may
+                        // send DNS/DoT there; proxying it to the remote
+                        // freedom hits Xray 26's private-IP block (and would
+                        // also fail on the DE edge). Handle locally.
+                        .put(JSONObject()
+                            .put("ip_cidr", JSONArray().put("172.19.0.0/30"))
+                            .put("port", 53)
+                            .put("action", "hijack-dns"))
+                        .put(JSONObject()
+                            .put("ip_cidr", JSONArray().put("172.19.0.0/30"))
+                            .put("action", "reject")))
                     .put("final", "proxy")
                     .put("auto_detect_interface", true))
                 .toString()

@@ -70,7 +70,7 @@ class DirectUiFlowTest {
 
         // Signalling fixture. Data peer is the HTTP origin for a raw path
         // plus a dedicated Xray server when the binary is present.
-        val xrayServer = FixtureXrayServer.start(appCtx, DIRECT_MOCK_CERT_PEM, DIRECT_MOCK_KEY_PEM)
+        val xrayServer = FixtureXrayServer.start(appCtx, DIRECT_MOCK_CERT_PEM, DIRECT_MOCK_KEY_PEM, origin.port)
         cleanup.add { xrayServer.close() }
         val dataPeerPort = if (xrayServer.port > 0) xrayServer.port else origin.port
 
@@ -141,11 +141,6 @@ class DirectUiFlowTest {
         assertFalse("oversized payload must fail", huge.ok)
         report.appendLine("reject_bad_json=ok reject_oversize=ok")
 
-        // Non-loopback TEST-NET dest that fixture freedom can reach locally
-        // after this address is on lo — same shape as a real site through the
-        // DE edge, not a 127.0.0.1 dest (loopback is not tunneled on a phone).
-        device.executeShellCommand("su 0 ip addr add 198.51.100.10/32 dev lo")
-
         clickFirst(listOf("Подключить", "Connect"), 8_000)
         Thread.sleep(1_000)
         clickFirst(listOf("OK", "Ок", "Allow", "Разрешить", "START", "Start"), 4_000)
@@ -182,39 +177,64 @@ class DirectUiFlowTest {
         }.getOrNull()
         report.appendLine("xray_mux=$muxInfo")
 
-        // Real TUN check from a different UID (shell). Same-UID HTTP is not
-        // used, and origin.hits is not treated as TUN success (SOCKS may have
-        // already incremented it).
-        val route = device.executeShellCommand("ip route get 1.1.1.1") ?: ""
-        report.appendLine("tun_route=${route.trim()}")
-        val tunRouted = route.contains("tun", ignoreCase = true)
-        device.executeShellCommand("su 0 ip addr add 198.51.100.10/32 dev lo")
-        val tunOut = device.executeShellCommand(
-            "sh -c 'printf \"GET / HTTP/1.0\\r\\nHost: fixture\\r\\n\\r\\n\" | toybox nc -w 4 198.51.100.10 ${origin.port}'"
-        ) ?: ""
-        val tunHttp = tunOut.contains("fixture-ok")
-        report.appendLine("tun_shell_uid=${if (tunHttp) "http_ok" else if (tunRouted) "routed_no_http" else "fail"} tun_http=$tunHttp tun_routed=$tunRouted origin_hits=${origin.hits.get()} note=shell-UID; origin.hits not used as TUN proof")
+        // Separate-UID TUN HTTP. 198.51.100.10 is NOT placed on lo: that made
+        // the dest a local address (bypass or VPN/gvisor conflict) and the
+        // previous nc returned in ~4ms with no xray accept and no origin hit.
+        // Fixture freedom redirects 198.51.100.10:origin -> 127.0.0.1:origin.
+        val route1111 = device.executeShellCommand("ip route get 1.1.1.1") ?: ""
+        val routeTunDest = device.executeShellCommand("ip route get 198.51.100.10 uid 2000") ?: ""
+        report.appendLine("tun_route=${route1111.trim()}")
+        report.appendLine("tun_dest_route=${routeTunDest.trim()}")
+        val tunDestViaTun = routeTunDest.contains("tun", ignoreCase = true)
+        val tunGet = tunHttpExchange(origin.port, "GET", "/tun", "", "fixture-tun-ok")
+        val echoBody = "razban-integrity-ok"
+        val tunEcho = tunHttpExchange(origin.port, "POST", "/echo", echoBody, echoBody)
+        val tunHttp = tunGet.ok && tunEcho.ok
+        report.appendLine("tun_http=$tunHttp tun_get_ok=${tunGet.ok} tun_echo_ok=${tunEcho.ok} tun_dest_via_tun=$tunDestViaTun")
+        report.appendLine("tun_get_out=${tunGet.out.take(180)}")
+        report.appendLine("tun_echo_out=${tunEcho.out.take(180)}")
+        report.appendLine("origin_hits=${origin.hits.get()} tun_hits=${origin.tunHits.get()} echo_hits=${origin.echoHits.get()}")
+        report.appendLine("tun_https=skipped no_https_client_or_tls_origin")
+        val uiLabel = com.razban.app.direct.VpnUiState.publicLabel(
+            RazbanVpnService.lastStatus.name, RazbanVpnService.lastChannelState, true,
+        )
+        val uiNotif = com.razban.app.direct.VpnUiState.notifTitle(
+            RazbanVpnService.lastStatus.name, RazbanVpnService.lastChannelState, true,
+        )
+        report.appendLine("ui_public=$uiLabel ui_notif=$uiNotif channel=${RazbanVpnService.lastChannelState} (DataWorking is byte-probe, not HTTP proof)")
         val dnsProp = device.executeShellCommand("getprop net.dns1") ?: ""
-        report.appendLine("dns_prop=${dnsProp.trim()} note=DoT-853 not asserted in this fixture; checked separately from TCP idle")
+        report.appendLine("dns_prop=${dnsProp.trim()}")
 
         assertTrue(
             "SOCKS transport (explicit, not TUN / same-UID HTTP) failed; socks=$socksOk status=${socks?.status} err=${socks?.error} channel=${RazbanVpnService.lastChannelState} sawData=$sawData",
             socksOk,
         )
         assertTrue(
-            "TUN not verified from a separate UID (no tun route and no shell HTTP); route=${route.trim()} http=$tunHttp",
-            tunRouted || tunHttp,
+            "TUN dest 198.51.100.10 must route via tun0 for shell uid, not lo/bypass; route=${routeTunDest.trim()}",
+            tunDestViaTun,
         )
+        assertTrue(
+            "TUN HTTP from separate UID (shell 2000) must return expected body via TUN->libbox->xray->mux->fixture->origin; get=${tunGet.out.take(120)} echo=${tunEcho.out.take(120)}",
+            tunHttp,
+        )
+        assertTrue(
+            "origin must see GET /tun (SOCKS GET / must not count as TUN proof); tunHits=${origin.tunHits.get()} echoHits=${origin.echoHits.get()}",
+            origin.tunHits.get() >= 1 && origin.echoHits.get() >= 1,
+        )
+        assertEquals("connected", uiLabel)
+        assertEquals("Подключено", uiNotif)
 
         Thread.sleep(21_000)
         val socksAfterIdle = runCatching {
             SocksHttpProbe.httpGet("127.0.0.1", 10808, "198.51.100.10", origin.port, "/")
         }.getOrNull()
-        report.appendLine("after_idle_20s socks=${socksAfterIdle?.ok} status=${socksAfterIdle?.status} err=${socksAfterIdle?.error}")
+        val tunAfterIdle = tunHttpExchange(origin.port, "GET", "/tun", "", "fixture-tun-ok")
+        report.appendLine("after_idle_20s socks=${socksAfterIdle?.ok} status=${socksAfterIdle?.status} err=${socksAfterIdle?.error} tun_http=${tunAfterIdle.ok}")
         assertTrue(
             "SOCKS payload after idle>20s failed; the data path must not tear itself down",
             socksAfterIdle?.ok == true && socksAfterIdle.status == 200,
         )
+        assertTrue("TUN HTTP after idle>20s failed; out=${tunAfterIdle.out.take(120)}", tunAfterIdle.ok)
 
         appCtx.startService(android.content.Intent(appCtx, RazbanVpnService::class.java).setAction(RazbanVpnService.ACTION_STOP))
         Thread.sleep(1_500)
@@ -230,14 +250,34 @@ class DirectUiFlowTest {
             if (socksRecover?.ok == true && socksRecover.status == 200) break
             Thread.sleep(500)
         }
-        report.appendLine("recovery_status=${RazbanVpnService.lastStatus} recovery_channel=${RazbanVpnService.lastChannelState} recovery_socks=${socksRecover?.ok} recovery_status_code=${socksRecover?.status}")
+        val tunRecover = tunHttpExchange(origin.port, "GET", "/tun", "", "fixture-tun-ok")
+        report.appendLine("recovery_status=${RazbanVpnService.lastStatus} recovery_channel=${RazbanVpnService.lastChannelState} recovery_socks=${socksRecover?.ok} recovery_status_code=${socksRecover?.status} recovery_tun_http=${tunRecover.ok}")
         shot("06-recovery")
         assertTrue(
             "break/autoreconnect SOCKS failed; status=${RazbanVpnService.lastStatus} channel=${RazbanVpnService.lastChannelState} socks=${socksRecover?.ok}",
             socksRecover?.ok == true && socksRecover.status == 200,
         )
+        assertTrue("break/autoreconnect TUN HTTP failed; out=${tunRecover.out.take(120)}", tunRecover.ok)
 
         File(shots, "e2e-report.txt").writeText(report.toString())
+    }
+
+    private data class TunHttpResult(val ok: Boolean, val out: String)
+
+    /** Shell uid 2000 HTTP via TUN to 198.51.100.10 (not loopback, not app UID). */
+    private fun tunHttpExchange(port: Int, method: String, path: String, body: String, expect: String): TunHttpResult {
+        // printf interprets \r\n; keep the command as one line (no raw CR/LF).
+        val extra = if (body.isNotEmpty()) "Content-Length: ${body.length}\\r\\n" else ""
+        val payload = "$method $path HTTP/1.0\\r\\nHost: tun-probe\\r\\n${extra}\\r\\n$body"
+        val cmd = "printf '$payload' | toybox nc -w 8 198.51.100.10 $port 2>&1"
+        var last = TunHttpResult(false, "")
+        repeat(3) {
+            val out = device.executeShellCommand(cmd) ?: ""
+            last = TunHttpResult(out.contains(expect), out)
+            if (last.ok) return last
+            Thread.sleep(400)
+        }
+        return last
     }
 
     private fun clickFirst(labels: List<String>, waitMs: Long): Boolean {
@@ -384,14 +424,28 @@ private class FixtureHttpOrigin {
     private val stop = AtomicBoolean(false)
     val port: Int get() = server.localPort
     val hits = java.util.concurrent.atomic.AtomicInteger()
+    val tunHits = java.util.concurrent.atomic.AtomicInteger()
+    val echoHits = java.util.concurrent.atomic.AtomicInteger()
     private val thread = Thread {
         while (!stop.get()) {
             val c = try { server.accept() } catch (_: Exception) { break }
             Thread {
                 try {
-                    c.getInputStream().read(ByteArray(1024))
+                    val raw = readRequest(c)
                     hits.incrementAndGet()
-                    val body = "fixture-ok"
+                    val first = raw.lineSequence().firstOrNull() ?: ""
+                    val body = when {
+                        first.startsWith("GET /tun") -> {
+                            tunHits.incrementAndGet()
+                            "fixture-tun-ok"
+                        }
+                        first.startsWith("POST /echo") -> {
+                            echoHits.incrementAndGet()
+                            val idx = raw.indexOf("\r\n\r\n")
+                            if (idx >= 0) raw.substring(idx + 4) else ""
+                        }
+                        else -> "fixture-ok"
+                    }
                     val resp = "HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body"
                     c.getOutputStream().write(resp.toByteArray())
                     c.getOutputStream().flush()
@@ -402,6 +456,44 @@ private class FixtureHttpOrigin {
             }.apply { isDaemon = true }.start()
         }
     }.apply { isDaemon = true }
+
+    private fun readRequest(c: java.net.Socket): String {
+        val inp = c.getInputStream()
+        val buf = ByteArray(512)
+        val acc = java.io.ByteArrayOutputStream()
+        c.soTimeout = 4000
+        while (acc.size() < 8192) {
+            val n = inp.read(buf)
+            if (n < 0) break
+            acc.write(buf, 0, n)
+            val bytes = acc.toByteArray()
+            val headerEnd = indexOfDoubleCrlf(bytes)
+            if (headerEnd >= 0) {
+                val headers = String(bytes, 0, headerEnd, Charsets.US_ASCII)
+                val cl = headers.lineSequence()
+                    .firstOrNull { it.startsWith("Content-Length:", ignoreCase = true) }
+                    ?.substringAfter(":")?.trim()?.toIntOrNull() ?: 0
+                while (acc.size() < headerEnd + 4 + cl) {
+                    val m = inp.read(buf)
+                    if (m < 0) break
+                    acc.write(buf, 0, m)
+                }
+                break
+            }
+        }
+        return acc.toString("US-ASCII")
+    }
+
+    private fun indexOfDoubleCrlf(bytes: ByteArray): Int {
+        var i = 0
+        while (i + 3 < bytes.size) {
+            if (bytes[i] == '\r'.code.toByte() && bytes[i + 1] == '\n'.code.toByte() &&
+                bytes[i + 2] == '\r'.code.toByte() && bytes[i + 3] == '\n'.code.toByte()
+            ) return i
+            i++
+        }
+        return -1
+    }
 
     fun start() { thread.start() }
     fun close() {
@@ -419,7 +511,7 @@ private class FixtureXrayServer(
     }
 
     companion object {
-        fun start(ctx: android.content.Context, certPem: String, keyPem: String): FixtureXrayServer {
+        fun start(ctx: android.content.Context, certPem: String, keyPem: String, originPort: Int): FixtureXrayServer {
             val listen = ServerSocket(0).use { it.localPort }
             val bin = File(ctx.applicationInfo.nativeLibraryDir, "libxray.so")
             if (!bin.exists()) return FixtureXrayServer(-1, null)
@@ -443,18 +535,24 @@ private class FixtureXrayServer(
                                     JSONObject().put("certificate", certLines).put("key", keyLines)
                                 ))))
                 ))
-                .put("outbounds", JSONArray().put(
-                    JSONObject().put("protocol", "freedom").put("tag", "direct")
-                        // Xray 26+ freedom default-blocks private/docs ranges
-                        // (127.0.0.0/8, 198.51.100.0/24, …) from VLESS and
-                        // blackholes them for 30–90s. The CI origin lives on
-                        // those dests; the isolated DE edge must keep the
-                        // default (do not copy this allow-list there).
-                        .put("settings", JSONObject().put("finalRules", JSONArray().put(
-                            JSONObject().put("action", "allow").put("ip", JSONArray()
-                                .put("127.0.0.0/8").put("::1/128").put("198.51.100.0/24"))
-                        )))
-                ))
+                .put("outbounds", JSONArray()
+                    .put(JSONObject().put("protocol", "freedom").put("tag", "direct"))
+                    .put(JSONObject().put("protocol", "freedom").put("tag", "to-origin")
+                        // Redirect TEST-NET dest used by TUN/SOCKS probes to the
+                        // in-process origin. Do not put 198.51.100.10 on lo —
+                        // that made the dest local (bypass or VPN conflict).
+                        // Isolated DE edge must keep default private-IP block.
+                        .put("settings", JSONObject()
+                            .put("redirect", "127.0.0.1:$originPort")
+                            .put("finalRules", JSONArray().put(
+                                JSONObject().put("action", "allow").put("ip", JSONArray()
+                                    .put("127.0.0.0/8").put("::1/128").put("198.51.100.0/24"))
+                            )))))
+                .put("routing", JSONObject().put("rules", JSONArray().put(
+                    JSONObject().put("type", "field")
+                        .put("ip", JSONArray().put("198.51.100.10"))
+                        .put("outboundTag", "to-origin")
+                )))
             val cfgFile = File(ctx.cacheDir, "xray-fixture-server.json")
             cfgFile.writeText(cfg.toString())
             return try {
