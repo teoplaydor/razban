@@ -274,8 +274,9 @@ class DirectUiFlowTest {
         val extra = if (body.isNotEmpty()) "Content-Length: ${body.length}\r\n" else ""
         val payload = "$method $path HTTP/1.0\r\nHost: tun-probe\r\n${extra}\r\n$body"
         val tag = "${method.lowercase()}-${path.trim('/').ifEmpty { "root" }}"
-        val localReq = File(testCtx.cacheDir, "razban-$tag.req")
-        val localSh = File(testCtx.cacheDir, "razban-$tag.sh")
+        val dir = File(appCtx.cacheDir, "tun-http").apply { check(mkdirs() || isDirectory) { "missing $absolutePath" } }
+        val localReq = File(dir, "razban-$tag.req")
+        val localSh = File(dir, "razban-$tag.sh")
         localReq.writeBytes(payload.toByteArray(Charsets.ISO_8859_1))
         val remoteReq = "/data/local/tmp/razban-$tag.req"
         val remoteSh = "/data/local/tmp/razban-$tag.sh"
