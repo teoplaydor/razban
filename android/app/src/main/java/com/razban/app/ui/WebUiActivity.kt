@@ -350,21 +350,3 @@ class WebUiActivity : AppCompatActivity() {
         """
     }
 }
-
-/**
- * SAF picker that must not filter by MIME: Samsung My Files hides .json when
- * EXTRA_MIME_TYPES is set to application/json + text/plain. Type is *\/* with
- * no EXTRA_MIME_TYPES; content is validated after the user picks a file.
- */
-class OpenAnyDocument : ActivityResultContract<Unit, android.net.Uri?>() {
-    override fun createIntent(context: android.content.Context, input: Unit): android.content.Intent {
-        return android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(android.content.Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-        }
-    }
-
-    override fun parseResult(resultCode: Int, intent: android.content.Intent?): android.net.Uri? {
-        return intent?.takeIf { resultCode == android.app.Activity.RESULT_OK }?.data
-    }
-}
