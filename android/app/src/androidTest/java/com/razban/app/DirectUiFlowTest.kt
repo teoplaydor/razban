@@ -127,10 +127,9 @@ class DirectUiFlowTest {
 
         // TXT variant: picker again after writing is already there; just confirm
         // the store still accepts a subsequent file import of the txt twin.
-        val txt = com.razban.app.config.ProfileImport.fromText(appCtx, String(testCtx.filesDir.resolve("fake-docs/direct-profile.txt").readBytes()))
-        // The provider files live in TEST context; ProfileImport.fromText just re-validates.
-        assertTrue("txt payload must parse", txt.ok || imported)
-        report.appendLine("import_txt_payload_valid=${txt.ok || imported}")
+        val txt = com.razban.app.config.ProfileImport.fromText(appCtx, jsonBody)
+        assertTrue("txt payload must parse", txt.ok)
+        report.appendLine("import_txt_payload_valid=${txt.ok}")
 
         val bad = com.razban.app.config.ProfileImport.fromText(appCtx, "{not-valid")
         assertFalse("bad json must fail validation", bad.ok)
@@ -153,11 +152,6 @@ class DirectUiFlowTest {
             Thread.sleep(400)
         }
         report.appendLine("tunnel=${RazbanVpnService.lastStatus} channel=${RazbanVpnService.lastChannelState}")
-        // Must not treat TUN-up as the success criterion.
-        assertFalse(
-            "UI/state must not stay DataWorking without a probe if we never marked it; recording only",
-            false,
-        )
         report.appendLine("data_working=$sawData (TUN-up-alone is not success)")
 
         // Explicit SOCKS transport check (app UID → 127.0.0.1:10808). Not a TUN proof.
@@ -165,38 +159,63 @@ class DirectUiFlowTest {
             SocksHttpProbe.httpGet("127.0.0.1", 10808, "127.0.0.1", origin.port, "/")
         }.getOrNull()
         val socksOk = socks?.ok == true && socks.status == 200
-        report.appendLine("transport_socks=${if (socksOk) "ok" else "fail"} viaSocks=${socks?.viaSocks} status=${socks?.status}")
+        report.appendLine("transport_socks=${if (socksOk) "ok" else "fail"} viaSocks=${socks?.viaSocks} status=${socks?.status} err=${socks?.error}")
+        report.appendLine("peer_kind=${if (xrayServer.port > 0) "xray-tls" else "raw-http"} peer_port=$dataPeerPort origin_port=${origin.port}")
 
-        // Real TUN check from a different UID (shell). Same-UID HTTP is not used.
-        val tunDest = "127.0.0.1:${origin.port}"
-        val tunCmd = "toybox nc -w 3 127.0.0.1 ${origin.port}"
-        // Localhost from shell may bypass TUN; still try a non-loopback alias first.
+        // Real TUN check from a different UID (shell). Same-UID HTTP is not
+        // used, and origin.hits is not treated as TUN success (SOCKS may have
+        // already incremented it).
+        val route = device.executeShellCommand("ip route get 1.1.1.1") ?: ""
+        report.appendLine("tun_route=${route.trim()}")
+        val tunRouted = route.contains("tun", ignoreCase = true)
         device.executeShellCommand("su 0 ip addr add 198.51.100.10/32 dev lo")
         val tunOut = device.executeShellCommand(
-            "sh -c 'printf \"GET / HTTP/1.0\\r\\nHost: fixture\\r\\n\\r\\n\" | toybox nc -w 4 198.51.100.10 ${origin.port} || printf \"GET / HTTP/1.0\\r\\nHost: fixture\\r\\n\\r\\n\" | toybox nc -w 4 127.0.0.1 ${origin.port}'"
+            "sh -c 'printf \"GET / HTTP/1.0\\r\\nHost: fixture\\r\\n\\r\\n\" | toybox nc -w 4 198.51.100.10 ${origin.port}'"
         ) ?: ""
-        val tunOk = tunOut.contains("fixture-ok") || origin.hits.get() > 0
-        report.appendLine("tun_shell_uid=${if (tunOk) "ok" else "fail"} origin_hits=${origin.hits.get()} note=shell-UID; localhost may bypass TUN on emulator")
-        // Require at least one real path: SOCKS through xray OR TUN hit. Prefer both.
+        val tunHttp = tunOut.contains("fixture-ok")
+        report.appendLine("tun_shell_uid=${if (tunHttp) "http_ok" else if (tunRouted) "routed_no_http" else "fail"} tun_http=$tunHttp tun_routed=$tunRouted origin_hits=${origin.hits.get()} note=shell-UID; origin.hits not used as TUN proof")
+        val dnsProp = device.executeShellCommand("getprop net.dns1") ?: ""
+        report.appendLine("dns_prop=${dnsProp.trim()} note=DoT-853 not asserted in this fixture; checked separately from TCP idle")
+
         assertTrue(
-            "neither SOCKS transport nor TUN shell reached the fixture; socks=$socksOk tun=$tunOk hits=${origin.hits.get()} channel=${RazbanVpnService.lastChannelState}",
-            socksOk || tunOk || sawData,
+            "SOCKS transport (explicit, not TUN / same-UID HTTP) failed; socks=$socksOk status=${socks?.status} err=${socks?.error} channel=${RazbanVpnService.lastChannelState} sawData=$sawData",
+            socksOk,
+        )
+        assertTrue(
+            "TUN not verified from a separate UID (no tun route and no shell HTTP); route=${route.trim()} http=$tunHttp",
+            tunRouted || tunHttp,
         )
 
         Thread.sleep(21_000)
         val socksAfterIdle = runCatching {
             SocksHttpProbe.httpGet("127.0.0.1", 10808, "127.0.0.1", origin.port, "/")
         }.getOrNull()
-        report.appendLine("after_idle_20s socks=${socksAfterIdle?.ok} status=${socksAfterIdle?.status}")
+        report.appendLine("after_idle_20s socks=${socksAfterIdle?.ok} status=${socksAfterIdle?.status} err=${socksAfterIdle?.error}")
+        assertTrue(
+            "SOCKS payload after idle>20s failed; the data path must not tear itself down",
+            socksAfterIdle?.ok == true && socksAfterIdle.status == 200,
+        )
 
         appCtx.startService(android.content.Intent(appCtx, RazbanVpnService::class.java).setAction(RazbanVpnService.ACTION_STOP))
         Thread.sleep(1_500)
         clickFirst(listOf("Подключить", "Connect"), 6_000)
         Thread.sleep(1_000)
         clickFirst(listOf("OK", "Ок", "Allow", "Разрешить"), 3_000)
-        Thread.sleep(4_000)
-        report.appendLine("recovery_status=${RazbanVpnService.lastStatus} recovery_channel=${RazbanVpnService.lastChannelState}")
+        val recoverUntil = System.currentTimeMillis() + 20_000
+        var socksRecover: SocksHttpProbe.Result? = null
+        while (System.currentTimeMillis() < recoverUntil) {
+            socksRecover = runCatching {
+                SocksHttpProbe.httpGet("127.0.0.1", 10808, "127.0.0.1", origin.port, "/")
+            }.getOrNull()
+            if (socksRecover?.ok == true && socksRecover.status == 200) break
+            Thread.sleep(500)
+        }
+        report.appendLine("recovery_status=${RazbanVpnService.lastStatus} recovery_channel=${RazbanVpnService.lastChannelState} recovery_socks=${socksRecover?.ok} recovery_status_code=${socksRecover?.status}")
         shot("06-recovery")
+        assertTrue(
+            "break/autoreconnect SOCKS failed; status=${RazbanVpnService.lastStatus} channel=${RazbanVpnService.lastChannelState} socks=${socksRecover?.ok}",
+            socksRecover?.ok == true && socksRecover.status == 200,
+        )
 
         File(shots, "e2e-report.txt").writeText(report.toString())
     }

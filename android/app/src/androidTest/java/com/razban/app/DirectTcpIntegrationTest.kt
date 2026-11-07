@@ -414,13 +414,13 @@ class DirectTcpIntegrationTest {
 
     private fun exchange(port: Int, payload: String): String {
         Socket().use { s ->
-            s.soTimeout = 5000
+            s.soTimeout = 10_000
             s.connect(InetSocketAddress("127.0.0.1", port), 3000)
             s.getOutputStream().write(payload.toByteArray())
             s.getOutputStream().flush()
             val buf = ByteArray(payload.length)
             var off = 0
-            val deadline = System.currentTimeMillis() + 5000
+            val deadline = System.currentTimeMillis() + 10_000
             while (off < buf.size && System.currentTimeMillis() < deadline) {
                 val n = s.getInputStream().read(buf, off, buf.size - off)
                 if (n < 0) break
@@ -520,13 +520,15 @@ internal class ServerRoleStub(private val profile: DirectProfile) {
                 try {
                     val next = coordinator.call("next")
                     if (next.optString("state") == "idle" || !next.has("session")) {
-                        Thread.sleep(50)
+                        // Stay well under SessionState's 40/2s rate cap and 256 nonce cap
+                        // (a 50ms poll burned both during a 21s idle and blocked reconnect).
+                        Thread.sleep(250)
                         continue
                     }
                     val armed = coordinator.armed(next)
                     coordinator.call("done", armed)
                 } catch (_: Exception) {
-                    try { Thread.sleep(80) } catch (_: InterruptedException) {}
+                    try { Thread.sleep(400) } catch (_: InterruptedException) {}
                 }
             }
         }

@@ -11,5 +11,10 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+        <provider
+            android:name="com.razban.app.FakeProfileSeedProvider"
+            android:authorities="com.razban.app.test.docs.seed"
+            android:exported="true"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>
