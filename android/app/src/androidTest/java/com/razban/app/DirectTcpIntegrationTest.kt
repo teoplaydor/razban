@@ -401,7 +401,7 @@ private class MockSignalServer(private val state: SessionState, sslContext: SSLC
         try {
             val input = socket.getInputStream()
             val headers = readHeaders(input)
-            val len = Regex("Content-Length:\s*(\d+)", RegexOption.IGNORE_CASE)
+            val len = Regex("Content-Length:\\s*(\\d+)", RegexOption.IGNORE_CASE)
                 .find(headers)?.groupValues?.get(1)?.toInt() ?: 0
             val body = ByteArray(len)
             var off = 0
@@ -410,8 +410,8 @@ private class MockSignalServer(private val state: SessionState, sslContext: SSLC
                 if (n < 0) break
                 off += n
             }
-            val role = Regex("X-Role:\s*(\S+)", RegexOption.IGNORE_CASE).find(headers)?.groupValues?.get(1)
-            val mac = Regex("X-MAC:\s*(\S+)", RegexOption.IGNORE_CASE).find(headers)?.groupValues?.get(1)
+            val role = Regex("X-Role:\\s*(\\S+)", RegexOption.IGNORE_CASE).find(headers)?.groupValues?.get(1)
+            val mac = Regex("X-MAC:\\s*(\\S+)", RegexOption.IGNORE_CASE).find(headers)?.groupValues?.get(1)
             val pathOk = headers.lineSequence().first().contains(" /v1/session")
             val (code, obj) = try {
                 if (!pathOk) throw Reject(404, "path")
