@@ -452,6 +452,6 @@ class RazbanVpnService : VpnService(), PlatformInterface, CommandServerHandler {
          *  service). Not for production logic — UI uses the broadcast. */
         @Volatile
         var lastStatus: Status = Status.Stopped
-            private set
+            internal set
     }
 }
